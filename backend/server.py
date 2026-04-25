@@ -390,6 +390,19 @@ async def log_call(payload: CallLogCreate, current=Depends(get_current_user)):
         "created_at": now_iso(),
     })
     await db.calls.insert_one(call)
+    # Mirror into lead_history so the Lead Detail "History" tab shows call activity
+    # alongside stage changes (uses the existing lead_history collection — no new table).
+    await db.lead_history.insert_one({
+        "id": new_id(),
+        "workspace_id": current["workspace_id"],
+        "lead_id": payload.lead_id,
+        "type": "call",
+        "status": payload.disposition,
+        "remark": payload.notes or "",
+        "user_id": current["id"],
+        "user_name": current.get("full_name", ""),
+        "created_at": now_iso(),
+    })
     # Auto-update lead stage on connection
     if payload.disposition == "Interested":
         await db.leads.update_one(

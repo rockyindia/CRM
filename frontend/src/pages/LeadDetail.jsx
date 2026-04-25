@@ -17,6 +17,8 @@ import { Phone, Sparkle, ArrowLeft, ChatCircleText, PencilSimple, Trash, Clock }
 import { toast } from "sonner";
 
 const DISPOSITIONS = ["Connected", "Busy", "Not Reachable", "Wrong Number", "Interested", "Not Interested"];
+// Telecalling — quick call statuses captured from the Call Status popup near mobile
+const CALL_STATUSES = ["Not Picked", "Interested", "Busy", "Call Later", "Site Visit", "Wrong Number"];
 
 export default function LeadDetail() {
   const { id } = useParams();
@@ -38,6 +40,11 @@ export default function LeadDetail() {
   const [aiSummary, setAiSummary] = useState(null);
   const [aiBusy, setAiBusy] = useState(null);
   const [history, setHistory] = useState([]);
+  // Telecalling popup state
+  const [callPopupOpen, setCallPopupOpen] = useState(false);
+  const [callStatus, setCallStatus] = useState("Not Picked");
+  const [callRemark, setCallRemark] = useState("");
+  const [callNextFu, setCallNextFu] = useState("");
 
   const teamMap = useMemo(() => Object.fromEntries(team.map((m) => [m.id, m.full_name])), [team]);
   const projectMap = useMemo(() => Object.fromEntries(projects.map((p) => [p.id, p.name])), [projects]);
@@ -139,6 +146,33 @@ export default function LeadDetail() {
 
   const u = (k) => (e) => setEditForm({ ...editForm, [k]: e?.target ? e.target.value : e });
 
+  // Telecalling: open the Call Status popup (and try to dial on mobile devices).
+  const onClickCall = () => {
+    setCallStatus("Not Picked"); setCallRemark(""); setCallNextFu("");
+    setCallPopupOpen(true);
+    // tel: is a no-op on desktop browsers but triggers the dialer on mobile.
+    if (typeof window !== "undefined" && /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent || "")) {
+      window.location.href = `tel:${lead.mobile}`;
+    }
+  };
+
+  const onSubmitCallStatus = async (e) => {
+    e.preventDefault();
+    try {
+      // 1) Log the call (existing endpoint; backend also writes to lead_history)
+      await api.post("/calls", { lead_id: id, duration_seconds: 0, disposition: callStatus, notes: callRemark });
+      // 2) Optional next follow-up — uses existing follow-up system, no logic change
+      if (callNextFu) {
+        await api.post("/followups", { lead_id: id, due_at: callNextFu, note: `After call: ${callStatus}` });
+      }
+      toast.success("Call saved");
+      setCallPopupOpen(false);
+      await load();
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || "Failed to save call");
+    }
+  };
+
   if (!lead) return <div className="text-muted-foreground">Loading…</div>;
 
   return (
@@ -176,7 +210,13 @@ export default function LeadDetail() {
       <div className="grid lg:grid-cols-3 gap-6">
         <Card className="lg:col-span-2 p-6 bg-surface border-border shadow-none">
           <div className="grid sm:grid-cols-2 gap-4">
-            <div><Label>Mobile</Label><div className="mt-1"><a href={`tel:${lead.mobile}`} className="text-accent font-medium flex items-center gap-1.5"><Phone size={14} /> {lead.mobile}</a></div></div>
+            <div>
+              <Label>Mobile</Label>
+              <div className="mt-1 flex items-center gap-2 flex-wrap">
+                <a href={`tel:${lead.mobile}`} className="text-accent font-medium flex items-center gap-1.5"><Phone size={14} /> {lead.mobile}</a>
+                <Button size="sm" variant="outline" onClick={onClickCall} data-testid="lead-call-btn"><Phone size={13} className="mr-1" /> Call</Button>
+              </div>
+            </div>
             <div><Label>Email</Label><div className="mt-1 text-sm">{lead.email || "—"}</div></div>
             <div><Label>City</Label><div className="mt-1 text-sm">{lead.city || "—"}</div></div>
             <div><Label>Budget</Label><div className="mt-1 text-sm font-semibold">{fmtINR(lead.budget)}</div></div>
@@ -353,10 +393,18 @@ export default function LeadDetail() {
               <ol className="relative border-l border-border ml-2 space-y-3 pl-5">
                 {history.map((h) => (
                   <li key={h.id} className="relative" data-testid={`history-${h.id}`}>
-                    <span className="absolute -left-[26px] top-1 h-3 w-3 rounded-full bg-accent border-2 border-background" />
-                    <div className="text-sm">
-                      Stage changed from <span className="font-semibold">{h.from || "—"}</span> to <span className="font-semibold">{h.to}</span>
-                    </div>
+                    <span className={`absolute -left-[26px] top-1 h-3 w-3 rounded-full border-2 border-background ${h.type === "call" ? "bg-warning" : "bg-accent"}`} />
+                    {h.type === "call" ? (
+                      <div className="text-sm">
+                        <span className="font-semibold">Call:</span> {h.status || "—"}
+                        {h.remark ? <span className="text-muted-foreground"> — {h.remark}</span> : null}
+                        <span className="text-muted-foreground"> — {new Date(h.created_at).toLocaleString()}</span>
+                      </div>
+                    ) : (
+                      <div className="text-sm">
+                        Stage changed from <span className="font-semibold">{h.from || "—"}</span> to <span className="font-semibold">{h.to}</span>
+                      </div>
+                    )}
                     <div className="text-xs text-muted-foreground mt-0.5">
                       by {h.user_name || "—"} • {new Date(h.created_at).toLocaleString()}
                     </div>
@@ -364,7 +412,7 @@ export default function LeadDetail() {
                 ))}
               </ol>
             ) : (
-              <div className="text-sm text-muted-foreground text-center py-6">No stage changes yet.</div>
+              <div className="text-sm text-muted-foreground text-center py-6">No activity yet.</div>
             )}
           </Card>
         </TabsContent>
@@ -416,6 +464,33 @@ export default function LeadDetail() {
             <div className="flex justify-end gap-2 pt-2">
               <Button type="button" variant="outline" onClick={() => setEditOpen(false)}>Cancel</Button>
               <Button type="submit" data-testid="save-edit-lead-btn">Save changes</Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+      {/* Telecalling — Call Status popup */}
+      <Dialog open={callPopupOpen} onOpenChange={setCallPopupOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Call status — {lead.name}</DialogTitle></DialogHeader>
+          <form onSubmit={onSubmitCallStatus} className="space-y-3">
+            <div>
+              <Label>Status</Label>
+              <Select value={callStatus} onValueChange={setCallStatus}>
+                <SelectTrigger data-testid="call-status-select"><SelectValue /></SelectTrigger>
+                <SelectContent>{CALL_STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Remark</Label>
+              <Input value={callRemark} onChange={(e) => setCallRemark(e.target.value)} placeholder="Quick note about this call" data-testid="call-remark-input" />
+            </div>
+            <div>
+              <Label>Next follow-up <span className="text-muted-foreground text-xs">(optional)</span></Label>
+              <Input type="datetime-local" value={callNextFu} onChange={(e) => setCallNextFu(e.target.value)} data-testid="call-next-fu-input" />
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <Button type="button" variant="outline" onClick={() => setCallPopupOpen(false)}>Cancel</Button>
+              <Button type="submit" data-testid="call-status-save-btn">Save</Button>
             </div>
           </form>
         </DialogContent>
