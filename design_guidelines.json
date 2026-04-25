@@ -1,0 +1,129 @@
+{
+  "theme": "LIGHT and DARK (Toggle required)",
+  "archetype": "Archetype 4: Swiss & High-Contrast (Authority, Clarity, Truth) + Premium SaaS touch",
+  "design_philosophy": {
+    "core": "A modern, premium SaaS Real Estate CRM inspired by Linear, Attio, and Notion. It prioritizes function-first minimalism, progressive disclosure, and modular widgets while maintaining a highly professional aesthetic for sales teams and brokers.",
+    "layout": "MODE B: 'CONTROL ROOM' GRID. High data density, strict scan paths, top-row KPIs flowing into deeper chart/table views.",
+    "surface": "Cardless or flat with 1px subtle borders. Glassmorphism exclusively for floating navigation/headers. No heavy drop shadows unless on hover states.",
+    "white_labeling": "Architecture must support CSS variables for primary colors, enabling fast white-labeling per workspace."
+  },
+  "colors": {
+    "light": {
+      "background": "#FFFFFF",
+      "surface": "#F9FAFB",
+      "surface_hover": "#F3F4F6",
+      "border": "#E5E7EB",
+      "text_primary": "#111827",
+      "text_secondary": "#6B7280",
+      "primary": "#0F172A",
+      "primary_hover": "#334155",
+      "primary_foreground": "#FFFFFF",
+      "accent": "#4F46E5",
+      "success": "#10B981",
+      "warning": "#F59E0B",
+      "danger": "#EF4444"
+    },
+    "dark": {
+      "background": "#0A0A0A",
+      "surface": "#141414",
+      "surface_hover": "#1F1F1F",
+      "border": "#27272A",
+      "text_primary": "#F9FAFB",
+      "text_secondary": "#A1A1AA",
+      "primary": "#FFFFFF",
+      "primary_hover": "#E4E4E7",
+      "primary_foreground": "#0A0A0A",
+      "accent": "#6366F1",
+      "success": "#059669",
+      "warning": "#D97706",
+      "danger": "#DC2626"
+    }
+  },
+  "typography": {
+    "fonts": {
+      "heading": "Outfit, sans-serif",
+      "body": "Manrope, sans-serif"
+    },
+    "scales": {
+      "h1": "text-4xl sm:text-5xl tracking-tight font-semibold leading-tight",
+      "h2": "text-2xl sm:text-3xl tracking-tight font-medium leading-tight",
+      "h3": "text-xl sm:text-2xl tracking-tight font-medium",
+      "h4": "text-lg sm:text-xl font-medium",
+      "body": "text-base leading-relaxed text-secondary",
+      "small": "text-sm leading-relaxed text-secondary",
+      "overline": "text-xs uppercase tracking-[0.2em] font-bold text-secondary"
+    },
+    "rules": [
+      "No generic 'Inter' or 'Roboto' for headings.",
+      "Headlines > 32px must use tracking-tight.",
+      "Overlines must be uppercase with wide tracking."
+    ]
+  },
+  "spacing_and_layout": {
+    "container": "p-6 md:p-8 lg:p-12",
+    "card_padding": "p-6",
+    "grid_strategy": "grid-cols-1 md:grid-cols-3 lg:grid-cols-4, gap-6 for dashboards.",
+    "sidebar": "w-64 border-r border-border h-screen sticky top-0 bg-surface",
+    "rules": [
+      "Generous Spacing Philosophy: Always pad containers inside borders.",
+      "Mobile First: Images max-h-[80vh] on mobile.",
+      "Dashboard widgets must stretch to match row heights (h-full)."
+    ]
+  },
+  "components": {
+    "buttons": "Flat, sharp or rounded-md. High contrast focus states (focus:ring-2 focus:ring-accent). MUST include explicitly defined hover text color.",
+    "cards": "1px border (border-border), bg-surface. Remove default Shadcn drop-shadow. Add subtle lift (-translate-y-1 shadow-md) only on hover.",
+    "tables": "Grid Borders style. Expose the skeleton with subtle border-b on rows. Highly scanable, no zebra striping.",
+    "kanban": "Horizontal scroll container, columns for 'New', 'Connected', 'Hot', etc. Soft background for columns, drag-and-drop support.",
+    "dialogs": "Glassmorphism overlays (backdrop-blur-sm bg-black/40) for modal backgrounds. Solid modal bodies.",
+    "inputs": "Shadcn based. Subtle borders, focus:ring-1 focus:ring-primary. Use Shadcn DatePicker, Select, Tabs."
+  },
+  "motion": {
+    "hover": "transition-all duration-200 ease-in-out",
+    "focus": "ring-2 ring-primary ring-offset-2 ring-offset-background",
+    "entrance": "Framer motion staggered fade-in up for lists/dashboards (y: 20, opacity: 0 -> y: 0, opacity: 1)",
+    "rules": [
+      "Respect prefers-reduced-motion.",
+      "Use micro-interactions for feedback on buttons and Kanban items."
+    ]
+  },
+  "assets": {
+    "icons": {
+      "library": "@phosphor-icons/react",
+      "installation": "yarn add @phosphor-icons/react",
+      "usage": "Use duotone weight for empty states/marketing, regular weight for dense dashboard interfaces."
+    },
+    "media": {
+      "auth_background": {
+        "url": "https://static.prod-images.emergentagent.com/jobs/0c696bf0-771b-44e9-9db1-888a2340f89a/images/5290a49342d9ec498277425d06c7eb22cb3c406db8a63ba6d3960ca9ca0c45c9.png",
+        "description": "Abstract elegant geometric lines for login/signup split screen."
+      },
+      "empty_state_inventory": {
+        "url": "https://static.prod-images.emergentagent.com/jobs/0c696bf0-771b-44e9-9db1-888a2340f89a/images/81c000cc375512ecaa21c51f2b1d7f8d4c773d8294307ca98c9f1c7e03fcafee.png",
+        "description": "Minimalist 3D isometric house blueprint for empty inventory states."
+      },
+      "avatars": [
+        "https://images.unsplash.com/photo-1609371497456-3a55a205d5eb?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NTZ8MHwxfHNlYXJjaHwxfHxwcm9mZXNzaW9uYWwlMjBkaXZlcnNlJTIwaGVhZHNob3QlMjBwb3J0cmFpdHxlbnwwfHx8fDE3NzcxMzA4MzR8MA&ixlib=rb-4.1.0&q=85",
+        "https://images.unsplash.com/photo-1609436132311-e4b0c9370469?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NTZ8MHwxfHNlYXJjaHwzfHxwcm9mZXNzaW9uYWwlMjBkaXZlcnNlJTIwaGVhZHNob3QlMjBwb3J0cmFpdHxlbnwwfHx8fDE3NzcxMzA4MzR8MA&ixlib=rb-4.1.0&q=85",
+        "https://images.unsplash.com/photo-1698650427325-d9c575dd6109?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NTZ8MHwxfHNlYXJjaHw0fHxwcm9mZXNzaW9uYWwlMjBkaXZlcnNlJTIwaGVhZHNob3QlMjBwb3J0cmFpdHxlbnwwfHx8fDE3NzcxMzA4MzR8MA&ixlib=rb-4.1.0&q=85",
+        "https://images.unsplash.com/photo-1697063882499-f7fca7d2d713?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NTZ8MHwxfHNlYXJjaHwyfHxwcm9mZXNzaW9uYWwlMjBkaXZlcnNlJTIwaGVhZHNob3QlMjBwb3J0cmFpdHxlbnwwfHx8fDE3NzcxMzA4MzR8MA&ixlib=rb-4.1.0&q=85",
+        "https://images.pexels.com/photos/34769117/pexels-photo-34769117.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940"
+      ],
+      "properties": [
+        "https://images.unsplash.com/photo-1758448511648-d7d8e1993c3f?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzJ8MHwxfHNlYXJjaHwyfHxtb2Rlcm4lMjBsdXh1cnklMjBhcGFydG1lbnQlMjBidWlsZGluZyUyMGV4dGVyaW9yfGVufDB8fHx8MTc3NzEzMDgzNHww&ixlib=rb-4.1.0&q=85",
+        "https://images.unsplash.com/photo-1775733924062-66ff3311f051?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzJ8MHwxfHNlYXJjaHwzfHxtb2Rlcm4lMjBsdXh1cnklMjBhcGFydG1lbnQlMjBidWlsZGluZyUyMGV4dGVyaW9yfGVufDB8fHx8MTc3NzEzMDgzNHww&ixlib=rb-4.1.0&q=85",
+        "https://images.unsplash.com/photo-1758193431355-54df41421657?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzJ8MHwxfHNlYXJjaHwxfHxtb2Rlcm4lMjBsdXh1cnklMjBhcGFydG1lbnQlMjBidWlsZGluZyUyMGV4dGVyaW9yfGVufDB8fHx8MTc3NzEzMDgzNHww&ixlib=rb-4.1.0&q=85"
+      ]
+    }
+  },
+  "instructions_to_main_agent": [
+    "You have .js files not .tsx files. Write all React components using .jsx or .js extension.",
+    "Implement full Dark/Light mode toggle utilizing standard Tailwind 'dark:' variants mapped to the colors defined in this schema.",
+    "Use @phosphor-icons/react for all iconography to maintain a high-end corporate feel.",
+    "Every interactive and key informational element MUST include a 'data-testid' attribute (e.g., data-testid='login-submit-btn').",
+    "Build the dashboard using pure HTML/Tailwind containers. Use Shadcn for interactive pieces (Select, Datepicker, Tabs, Tables) but customize to match the 'flat + 1px border' aesthetic.",
+    "Kanban board should use drag-and-drop mechanics (like dnd-kit or react-beautiful-dnd if applicable) with horizontally scrollable columns.",
+    "Telecalling CRM component needs a fixed or dockable dialer panel that is responsive on mobile.",
+    "Never use generic placeholder images; rely strictly on the provided URLs in this guideline."
+  ]
+}
