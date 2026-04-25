@@ -4,7 +4,7 @@ import { useApp } from "../contexts/AppContext";
 import { Link } from "react-router-dom";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
-import { ChartLineUp, Fire, UsersThree, Receipt, Bell, Sparkle, ArrowRight } from "@phosphor-icons/react";
+import { ChartLineUp, Fire, UsersThree, Receipt, Bell, Sparkle, ArrowRight, CalendarBlank, WarningCircle, Clock } from "@phosphor-icons/react";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, PieChart, Pie, Cell, CartesianGrid } from "recharts";
 import { toast } from "sonner";
 
@@ -74,6 +74,36 @@ export default function Dashboard() {
         <StatCard icon={Fire} label={t("hot_leads")} value={stats.hot} accent="text-red-500" testid="kpi-hot" />
         <StatCard icon={ChartLineUp} label={t("conversion")} value={`${stats.conversion_pct}%`} accent="text-success" testid="kpi-conversion" />
         <StatCard icon={Receipt} label={t("revenue")} value={fmtINR(stats.revenue)} accent="text-success" testid="kpi-revenue" />
+      </div>
+
+      {/* Follow-up cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <Link to="/app/followups?filter=today" data-testid="fu-card-today" className="border border-border rounded-lg p-5 bg-surface le-card-hover">
+          <div className="flex items-start justify-between">
+            <div className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground">Today's Follow-ups</div>
+            <CalendarBlank size={18} weight="duotone" className="text-accent" />
+          </div>
+          <div className="font-heading text-3xl font-semibold mt-3 tracking-tight">{stats.followups_today ?? 0}</div>
+          <div className="text-xs text-accent flex items-center gap-1 mt-2">View all <ArrowRight size={12} /></div>
+        </Link>
+        <Link to="/app/followups?filter=overdue" data-testid="fu-card-overdue" className={`border rounded-lg p-5 le-card-hover ${(stats.followups_overdue ?? 0) > 0 ? "border-destructive bg-destructive/5" : "border-border bg-surface"}`}>
+          <div className="flex items-start justify-between">
+            <div className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground">Overdue Follow-ups</div>
+            <WarningCircle size={18} weight="duotone" className="text-destructive" />
+          </div>
+          <div className={`font-heading text-3xl font-semibold mt-3 tracking-tight ${(stats.followups_overdue ?? 0) > 0 ? "text-destructive" : ""}`}>
+            {stats.followups_overdue ?? 0}
+          </div>
+          <div className="text-xs text-destructive flex items-center gap-1 mt-2">View all <ArrowRight size={12} /></div>
+        </Link>
+        <Link to="/app/followups?filter=upcoming" data-testid="fu-card-upcoming" className="border border-border rounded-lg p-5 bg-surface le-card-hover">
+          <div className="flex items-start justify-between">
+            <div className="text-[10px] uppercase tracking-[0.2em] font-bold text-muted-foreground">Upcoming Follow-ups</div>
+            <Clock size={18} weight="duotone" className="text-warning" />
+          </div>
+          <div className="font-heading text-3xl font-semibold mt-3 tracking-tight">{stats.followups_upcoming ?? 0}</div>
+          <div className="text-xs text-accent flex items-center gap-1 mt-2">View all <ArrowRight size={12} /></div>
+        </Link>
       </div>
 
       <div className="grid lg:grid-cols-3 gap-6">

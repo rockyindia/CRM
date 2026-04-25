@@ -3,7 +3,7 @@ import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useApp } from "../../contexts/AppContext";
 import {
   House, UsersThree, Kanban, Buildings, Calendar, Receipt,
-  ChartBar, Gear, Sun, Moon, SignOut, List, X, Translate, Crown
+  ChartBar, Gear, Sun, Moon, SignOut, List, X, Translate, Crown, Bell
 } from "@phosphor-icons/react";
 import { Button } from "../ui/button";
 
@@ -11,6 +11,7 @@ const NAV = [
   { to: "/app", end: true, icon: House, key: "dashboard" },
   { to: "/app/leads", icon: UsersThree, key: "leads" },
   { to: "/app/pipeline", icon: Kanban, key: "pipeline" },
+  { to: "/app/followups", icon: Bell, key: "followups" },
   { to: "/app/inventory", icon: Buildings, key: "inventory" },
   { to: "/app/site-visits", icon: Calendar, key: "siteVisits" },
   { to: "/app/bookings", icon: Receipt, key: "bookings" },

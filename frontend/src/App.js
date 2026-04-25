@@ -15,6 +15,7 @@ import Bookings from "./pages/Bookings";
 import Team from "./pages/Team";
 import Reports from "./pages/Reports";
 import Settings from "./pages/Settings";
+import Followups from "./pages/Followups";
 import Landing from "./pages/Landing";
 
 function Protected({ children }) {
@@ -46,6 +47,7 @@ function App() {
             <Route path="leads/:id" element={<LeadDetail />} />
             <Route path="inventory" element={<Inventory />} />
             <Route path="site-visits" element={<SiteVisits />} />
+            <Route path="followups" element={<Followups />} />
             <Route path="bookings" element={<Bookings />} />
             <Route path="team" element={<Team />} />
             <Route path="reports" element={<Reports />} />

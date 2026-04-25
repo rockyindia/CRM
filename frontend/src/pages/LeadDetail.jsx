@@ -28,6 +28,9 @@ export default function LeadDetail() {
   const [projects, setProjects] = useState([]);
   const [callForm, setCallForm] = useState({ duration_seconds: 0, disposition: "Connected", notes: "" });
   const [followupForm, setFollowupForm] = useState({ due_at: "", note: "" });
+  const [doneId, setDoneId] = useState(null);
+  const [nextDate, setNextDate] = useState("");
+  const [nextNote, setNextNote] = useState("");
   const [editOpen, setEditOpen] = useState(false);
   const [editForm, setEditForm] = useState({});
   const [aiScore, setAiScore] = useState(null);
@@ -72,6 +75,17 @@ export default function LeadDetail() {
     toast.success("Follow-up added");
     setFollowupForm({ due_at: "", note: "" });
     await load();
+  };
+
+  const markFollowupDone = async (fid, withNext) => {
+    const body = { status: "Done" };
+    if (withNext && nextDate) { body.next_due_at = nextDate; body.next_note = nextNote || ""; }
+    try {
+      await api.patch(`/followups/${fid}`, body);
+      toast.success(withNext ? "Done — next follow-up scheduled" : "Marked as Done");
+      setDoneId(null); setNextDate(""); setNextNote("");
+      await load();
+    } catch { toast.error("Failed"); }
   };
 
   const openEdit = () => {
@@ -249,16 +263,44 @@ export default function LeadDetail() {
             <div className="font-heading font-medium mb-4 flex items-center gap-2"><Clock size={18} /> Follow-up history</div>
             {followups.length ? (
               <ol className="relative border-l border-border ml-2 space-y-4 pl-5">
-                {followups.map((f) => (
+                {followups.map((f) => {
+                  const overdue = f.status === "Pending" && new Date(f.due_at) < new Date(new Date().setHours(0, 0, 0, 0));
+                  return (
                   <li key={f.id} className="relative" data-testid={`followup-${f.id}`}>
-                    <span className={`absolute -left-[26px] top-1 h-3 w-3 rounded-full border-2 border-background ${f.status === "Pending" ? "bg-warning" : "bg-success"}`} />
-                    <div className="text-sm font-medium">{new Date(f.due_at).toLocaleString()}</div>
-                    <div className="text-xs text-muted-foreground mt-0.5">{f.note || "No note"}</div>
-                    <div className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground mt-1">
-                      {f.status} • added {new Date(f.created_at).toLocaleDateString()}
+                    <span className={`absolute -left-[26px] top-1 h-3 w-3 rounded-full border-2 border-background ${
+                      f.status === "Done" ? "bg-success" : overdue ? "bg-destructive" : "bg-warning"
+                    }`} />
+                    <div className="flex items-start justify-between gap-2 flex-wrap">
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium">
+                          {new Date(f.due_at).toLocaleString()}
+                          {overdue && <span className="ml-2 text-[10px] uppercase tracking-wider font-bold text-destructive">Overdue</span>}
+                        </div>
+                        <div className="text-xs text-muted-foreground mt-0.5">{f.note || "No note"}</div>
+                        <div className="text-[10px] uppercase tracking-wider font-bold mt-1">
+                          <span className={f.status === "Done" ? "text-success" : "text-warning"}>{f.status}</span>
+                          <span className="text-muted-foreground"> • added {new Date(f.created_at).toLocaleDateString()}</span>
+                        </div>
+                      </div>
+                      {f.status === "Pending" && (
+                        <div>
+                          {doneId === f.id ? (
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <Input type="datetime-local" value={nextDate} onChange={(e) => setNextDate(e.target.value)} className="h-8 w-48" placeholder="Next" />
+                              <Input value={nextNote} onChange={(e) => setNextNote(e.target.value)} className="h-8 w-40" placeholder="Next note" />
+                              <Button size="sm" onClick={() => markFollowupDone(f.id, true)} disabled={!nextDate} data-testid={`save-next-${f.id}`}>Done + Schedule</Button>
+                              <Button size="sm" variant="ghost" onClick={() => markFollowupDone(f.id, false)}>Just done</Button>
+                              <Button size="sm" variant="ghost" onClick={() => { setDoneId(null); setNextDate(""); setNextNote(""); }}>Cancel</Button>
+                            </div>
+                          ) : (
+                            <Button size="sm" variant="outline" onClick={() => setDoneId(f.id)} data-testid={`mark-done-${f.id}`}>Mark Done</Button>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </li>
-                ))}
+                  );
+                })}
               </ol>
             ) : (
               <div className="text-sm text-muted-foreground text-center py-6">No follow-ups yet.</div>

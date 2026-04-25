@@ -360,6 +360,13 @@ async def list_calls(lead_id: Optional[str] = None, current=Depends(get_current_
 
 
 # ============ FOLLOWUPS ============
+SALES_ROLES = {"executive", "telecaller", "sales_executive"}
+
+
+def _is_sales_user(user: Dict[str, Any]) -> bool:
+    return user.get("role") in SALES_ROLES
+
+
 @api.post("/followups")
 async def create_followup(payload: FollowupCreate, current=Depends(get_current_user)):
     f = payload.model_dump()
@@ -375,12 +382,85 @@ async def create_followup(payload: FollowupCreate, current=Depends(get_current_u
 
 
 @api.get("/followups")
-async def list_followups(lead_id: Optional[str] = None, current=Depends(get_current_user)):
-    q = {"workspace_id": current["workspace_id"]}
+async def list_followups(
+    lead_id: Optional[str] = None,
+    filter: Optional[str] = None,  # today | overdue | upcoming | completed
+    scope: Optional[str] = "auto",  # auto | mine | all
+    current=Depends(get_current_user),
+):
+    q: Dict[str, Any] = {"workspace_id": current["workspace_id"]}
     if lead_id:
         q["lead_id"] = lead_id
-    items = await db.followups.find(q, {"_id": 0}).sort("due_at", 1).to_list(500)
+    # role-based scoping: sales users always see only their own
+    if scope == "mine" or (scope == "auto" and _is_sales_user(current)):
+        q["user_id"] = current["id"]
+    now = datetime.now(timezone.utc)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    today_end = now.replace(hour=23, minute=59, second=59, microsecond=999999).isoformat()
+    now_iso_str = now.isoformat()
+    if filter == "today":
+        q["status"] = "Pending"
+        q["due_at"] = {"$gte": today_start, "$lte": today_end}
+    elif filter == "overdue":
+        q["status"] = "Pending"
+        q["due_at"] = {"$lt": today_start}
+    elif filter == "upcoming":
+        q["status"] = "Pending"
+        q["due_at"] = {"$gt": today_end}
+    elif filter == "completed":
+        q["status"] = "Done"
+    items = await db.followups.find(q, {"_id": 0}).sort("due_at", 1).to_list(1000)
+    _ = now_iso_str  # reserved
     return items
+
+
+class FollowupUpdate(BaseModel):
+    status: Optional[str] = None  # Pending | Done
+    due_at: Optional[str] = None
+    note: Optional[str] = None
+    next_due_at: Optional[str] = None  # if provided & status=Done, auto-create next followup
+    next_note: Optional[str] = None
+
+
+@api.patch("/followups/{fid}")
+async def update_followup(fid: str, payload: FollowupUpdate, current=Depends(get_current_user)):
+    existing = await db.followups.find_one({"id": fid, "workspace_id": current["workspace_id"]}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Follow-up not found")
+    if _is_sales_user(current) and existing.get("user_id") != current["id"]:
+        raise HTTPException(status_code=403, detail="Not allowed")
+    update_data = {k: v for k, v in payload.model_dump(exclude_unset=True).items()
+                   if k not in {"next_due_at", "next_note"} and v is not None}
+    if update_data:
+        update_data["updated_at"] = now_iso()
+        await db.followups.update_one({"id": fid}, {"$set": update_data})
+    # Auto-create next follow-up if marking Done with next_due_at
+    next_followup = None
+    if payload.status == "Done" and payload.next_due_at:
+        next_followup = {
+            "id": new_id(), "workspace_id": current["workspace_id"], "user_id": current["id"],
+            "lead_id": existing["lead_id"], "due_at": payload.next_due_at,
+            "note": payload.next_note or "", "status": "Pending", "created_at": now_iso(),
+        }
+        await db.followups.insert_one(next_followup)
+        await db.leads.update_one(
+            {"id": existing["lead_id"], "workspace_id": current["workspace_id"]},
+            {"$set": {"followup_date": payload.next_due_at, "updated_at": now_iso()}},
+        )
+        next_followup.pop("_id", None)
+    updated = await db.followups.find_one({"id": fid}, {"_id": 0})
+    return {"followup": updated, "next": next_followup}
+
+
+@api.delete("/followups/{fid}")
+async def delete_followup(fid: str, current=Depends(get_current_user)):
+    existing = await db.followups.find_one({"id": fid, "workspace_id": current["workspace_id"]})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Not found")
+    if _is_sales_user(current) and existing.get("user_id") != current["id"]:
+        raise HTTPException(status_code=403, detail="Not allowed")
+    await db.followups.delete_one({"id": fid})
+    return {"ok": True}
 
 
 # ============ PROJECTS & UNITS ============
@@ -587,8 +667,23 @@ async def dashboard_stats(current=Depends(get_current_user)):
     ])
     revenue_list = [r async for r in revenue_cursor]
     revenue = revenue_list[0]["total"] if revenue_list else 0
-    # followups
-    followups_pending = await db.followups.count_documents({"workspace_id": ws, "status": "Pending"})
+    # followups (role-scoped: sales users see only own)
+    fu_q: Dict[str, Any] = {"workspace_id": ws}
+    if _is_sales_user(current):
+        fu_q["user_id"] = current["id"]
+    now = datetime.now(timezone.utc)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    today_end = now.replace(hour=23, minute=59, second=59, microsecond=999999).isoformat()
+    followups_pending = await db.followups.count_documents({**fu_q, "status": "Pending"})
+    followups_today = await db.followups.count_documents({
+        **fu_q, "status": "Pending", "due_at": {"$gte": today_start, "$lte": today_end},
+    })
+    followups_overdue = await db.followups.count_documents({
+        **fu_q, "status": "Pending", "due_at": {"$lt": today_start},
+    })
+    followups_upcoming = await db.followups.count_documents({
+        **fu_q, "status": "Pending", "due_at": {"$gt": today_end},
+    })
     return {
         "total_leads": total_leads,
         "leads_today": leads_today,
@@ -599,6 +694,9 @@ async def dashboard_stats(current=Depends(get_current_user)):
         "conversion_pct": conv,
         "revenue": revenue,
         "followups_pending": followups_pending,
+        "followups_today": followups_today,
+        "followups_overdue": followups_overdue,
+        "followups_upcoming": followups_upcoming,
         "sources": sources,
         "stages": stages,
     }

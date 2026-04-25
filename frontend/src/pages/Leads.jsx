@@ -209,8 +209,11 @@ export default function Leads() {
             </tr>
           </thead>
           <tbody>
-            {filtered.map((l) => (
-              <tr key={l.id} className="border-b border-border last:border-0 hover:bg-surface-hover" data-testid={`lead-row-${l.id}`}>
+            {filtered.map((l) => {
+              const overdue = l.followup_date && l.stage !== "Won" && l.stage !== "Lost" && l.stage !== "Booked"
+                && new Date(l.followup_date) < new Date(new Date().setHours(0, 0, 0, 0));
+              return (
+              <tr key={l.id} className={`border-b border-border last:border-0 hover:bg-surface-hover ${overdue ? "border-l-4 border-l-destructive" : ""}`} data-testid={`lead-row-${l.id}`}>
                 <td className="py-3 px-4">
                   <Link to={`/app/leads/${l.id}`} className="font-medium hover:text-accent" data-testid={`lead-open-${l.id}`}>{l.name}</Link>
                 </td>
@@ -225,12 +228,16 @@ export default function Leads() {
                   <span className={`px-2 py-0.5 text-xs font-semibold rounded border ${STAGE_COLORS[l.stage] || ""}`}>{l.stage}</span>
                 </td>
                 <td className="py-3 px-4 text-muted-foreground">{teamMap[l.assigned_to] || "—"}</td>
-                <td className="py-3 px-4 text-muted-foreground">{l.followup_date ? new Date(l.followup_date).toLocaleDateString() : "—"}</td>
+                <td className={`py-3 px-4 ${overdue ? "text-destructive font-semibold" : "text-muted-foreground"}`}>
+                  {l.followup_date ? new Date(l.followup_date).toLocaleDateString() : "—"}
+                  {overdue && <span className="ml-1 text-[10px] uppercase">overdue</span>}
+                </td>
                 <td className="py-3 px-4">
                   <Link to={`/app/leads/${l.id}`} className="text-accent text-xs font-semibold">Open</Link>
                 </td>
               </tr>
-            ))}
+              );
+            })}
             {!filtered.length && (
               <tr><td colSpan={10} className="py-12 text-center text-muted-foreground">No leads match your filters.</td></tr>
             )}
