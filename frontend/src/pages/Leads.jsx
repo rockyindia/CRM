@@ -177,13 +177,15 @@ export default function Leads() {
             {SOURCES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
           </SelectContent>
         </Select>
-        <Select value={assigned} onValueChange={setAssigned}>
-          <SelectTrigger className="w-44" data-testid="leads-assigned-filter"><SelectValue placeholder="All users" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All users</SelectItem>
-            {team.map((m) => <SelectItem key={m.id} value={m.id}>{m.full_name}</SelectItem>)}
-          </SelectContent>
-        </Select>
+        {user?.role === "owner" && (
+          <Select value={assigned} onValueChange={setAssigned}>
+            <SelectTrigger className="w-44" data-testid="leads-assigned-filter"><SelectValue placeholder="All users" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All users</SelectItem>
+              {team.map((m) => <SelectItem key={m.id} value={m.id}>{m.full_name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        )}
         {(q || stage !== "all" || source !== "all" || assigned !== "all") && (
           <Button variant="ghost" size="sm" onClick={() => { setQ(""); setStage("all"); setSource("all"); setAssigned("all"); setTimeout(load, 0); }} data-testid="leads-clear-filters">
             Clear

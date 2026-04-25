@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { api, fmtINR, STAGES, STAGE_COLORS, SOURCES } from "../lib/api";
+import { useApp } from "../contexts/AppContext";
 import { Link } from "react-router-dom";
 import {
   DndContext, useDraggable, useDroppable,
@@ -64,6 +65,7 @@ function Column({ stage, leads, onAddFollowup }) {
 }
 
 export default function LeadKanban() {
+  const { user } = useApp();
   const [leads, setLeads] = useState([]);
   const [team, setTeam] = useState([]);
   const [assigned, setAssigned] = useState("all");
@@ -134,13 +136,15 @@ export default function LeadKanban() {
 
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-2" data-testid="kanban-filters">
-        <Select value={assigned} onValueChange={setAssigned}>
-          <SelectTrigger className="w-44" data-testid="kanban-assigned-filter"><SelectValue placeholder="All users" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All users</SelectItem>
-            {team.map((m) => <SelectItem key={m.id} value={m.id}>{m.full_name}</SelectItem>)}
-          </SelectContent>
-        </Select>
+        {user?.role === "owner" && (
+          <Select value={assigned} onValueChange={setAssigned}>
+            <SelectTrigger className="w-44" data-testid="kanban-assigned-filter"><SelectValue placeholder="All users" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All users</SelectItem>
+              {team.map((m) => <SelectItem key={m.id} value={m.id}>{m.full_name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        )}
         <Select value={source} onValueChange={setSource}>
           <SelectTrigger className="w-40" data-testid="kanban-source-filter"><SelectValue placeholder="All sources" /></SelectTrigger>
           <SelectContent>
