@@ -442,23 +442,23 @@ async def list_followups(
     # role-based scoping: sales users always see only their own
     if scope == "mine" or (scope == "auto" and _is_sales_user(current)):
         q["user_id"] = current["id"]
-    now = datetime.now(timezone.utc)
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-    today_end = now.replace(hour=23, minute=59, second=59, microsecond=999999).isoformat()
-    now_iso_str = now.isoformat()
+    # DATE-only classification (ignore time-of-day & timezone offsets in stored value).
+    # ISO 8601 strings sort lexicographically by date, so prefix comparison is safe.
+    today_date = datetime.now(timezone.utc).date()
+    today_str = today_date.isoformat()
+    tomorrow_str = (today_date + timedelta(days=1)).isoformat()
     if filter == "today":
         q["status"] = "Pending"
-        q["due_at"] = {"$gte": today_start, "$lte": today_end}
+        q["due_at"] = {"$gte": today_str, "$lt": tomorrow_str}
     elif filter == "overdue":
         q["status"] = "Pending"
-        q["due_at"] = {"$lt": today_start}
+        q["due_at"] = {"$lt": today_str}
     elif filter == "upcoming":
         q["status"] = "Pending"
-        q["due_at"] = {"$gt": today_end}
+        q["due_at"] = {"$gte": tomorrow_str}
     elif filter == "completed":
         q["status"] = "Done"
     items = await db.followups.find(q, {"_id": 0}).sort("due_at", 1).to_list(1000)
-    _ = now_iso_str  # reserved
     return items
 
 
@@ -717,22 +717,22 @@ async def dashboard_stats(current=Depends(get_current_user)):
     ])
     revenue_list = [r async for r in revenue_cursor]
     revenue = revenue_list[0]["total"] if revenue_list else 0
-    # followups (role-scoped: sales users see only own)
+    # followups (role-scoped: sales users see only own) — DATE-only classification
     fu_q: Dict[str, Any] = {"workspace_id": ws}
     if _is_sales_user(current):
         fu_q["user_id"] = current["id"]
-    now = datetime.now(timezone.utc)
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-    today_end = now.replace(hour=23, minute=59, second=59, microsecond=999999).isoformat()
+    today_date = datetime.now(timezone.utc).date()
+    today_str = today_date.isoformat()
+    tomorrow_str = (today_date + timedelta(days=1)).isoformat()
     followups_pending = await db.followups.count_documents({**fu_q, "status": "Pending"})
     followups_today = await db.followups.count_documents({
-        **fu_q, "status": "Pending", "due_at": {"$gte": today_start, "$lte": today_end},
+        **fu_q, "status": "Pending", "due_at": {"$gte": today_str, "$lt": tomorrow_str},
     })
     followups_overdue = await db.followups.count_documents({
-        **fu_q, "status": "Pending", "due_at": {"$lt": today_start},
+        **fu_q, "status": "Pending", "due_at": {"$lt": today_str},
     })
     followups_upcoming = await db.followups.count_documents({
-        **fu_q, "status": "Pending", "due_at": {"$gt": today_end},
+        **fu_q, "status": "Pending", "due_at": {"$gte": tomorrow_str},
     })
     return {
         "total_leads": total_leads,

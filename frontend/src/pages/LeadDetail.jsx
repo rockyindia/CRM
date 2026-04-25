@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
-import { api, fmtINR, STAGES, SOURCES } from "../lib/api";
+import { api, fmtINR, STAGES, SOURCES, isOverdueDate } from "../lib/api";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
 import { Input } from "../components/ui/input";
@@ -267,7 +267,7 @@ export default function LeadDetail() {
             {followups.length ? (
               <ol className="relative border-l border-border ml-2 space-y-4 pl-5">
                 {followups.map((f) => {
-                  const overdue = f.status === "Pending" && new Date(f.due_at) < new Date(new Date().setHours(0, 0, 0, 0));
+                  const overdue = f.status === "Pending" && isOverdueDate(f.due_at);
                   return (
                   <li key={f.id} className="relative" data-testid={`followup-${f.id}`}>
                     <span className={`absolute -left-[26px] top-1 h-3 w-3 rounded-full border-2 border-background ${

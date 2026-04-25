@@ -45,3 +45,9 @@ export const SOURCES = [
   "Facebook Ads", "Instagram", "Website", "Walk-in", "Reference", "Google Ads",
   "Facebook", "Google", "WordPress", "99acres", "MagicBricks", "Housing", "Manual", "Other",
 ];
+
+// DATE-only follow-up classification (ignores time of day & timezone offset in stored value).
+// Backend uses the same UTC-date prefix comparison, so both sides agree.
+export const todayDateStr = () => new Date().toISOString().slice(0, 10);
+export const isOverdueDate = (iso) => !!iso && iso.slice(0, 10) < todayDateStr();
+export const isTodayDate = (iso) => !!iso && iso.slice(0, 10) === todayDateStr();

@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from "react";
-import { api, fmtINR, STAGES, STAGE_COLORS, SOURCES } from "../lib/api";
+import { api, fmtINR, STAGES, STAGE_COLORS, SOURCES, isOverdueDate } from "../lib/api";
 import { useApp } from "../contexts/AppContext";
 import { Link } from "react-router-dom";
 import { Button } from "../components/ui/button";
@@ -213,7 +213,7 @@ export default function Leads() {
           <tbody>
             {filtered.map((l) => {
               const overdue = l.followup_date && l.stage !== "Won" && l.stage !== "Lost" && l.stage !== "Booked"
-                && new Date(l.followup_date) < new Date(new Date().setHours(0, 0, 0, 0));
+                && isOverdueDate(l.followup_date);
               return (
               <tr key={l.id} className={`border-b border-border last:border-0 hover:bg-surface-hover ${overdue ? "border-l-4 border-l-destructive" : ""}`} data-testid={`lead-row-${l.id}`}>
                 <td className="py-3 px-4">

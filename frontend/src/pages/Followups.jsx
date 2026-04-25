@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useSearchParams, Link } from "react-router-dom";
-import { api } from "../lib/api";
+import { api, isOverdueDate } from "../lib/api";
 import { Card } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -47,7 +47,7 @@ export default function Followups() {
     } catch { toast.error("Failed"); }
   };
 
-  const isOverdue = (f) => f.status === "Pending" && new Date(f.due_at) < new Date(new Date().setHours(0, 0, 0, 0));
+  const isOverdue = (f) => f.status === "Pending" && isOverdueDate(f.due_at);
 
   return (
     <div className="space-y-6" data-testid="followups-page">
