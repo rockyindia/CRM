@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from "react";
-import { useParams, Link } from "react-router-dom";
-import { api, fmtINR, STAGES, STAGE_COLORS } from "../lib/api";
+import React, { useEffect, useState, useMemo } from "react";
+import { useParams, Link, useNavigate } from "react-router-dom";
+import { api, fmtINR, STAGES, SOURCES } from "../lib/api";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
 import { Input } from "../components/ui/input";
@@ -8,36 +8,54 @@ import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs";
-import { Phone, Sparkle, ArrowLeft, ChatCircleText } from "@phosphor-icons/react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
+} from "../components/ui/alert-dialog";
+import { Phone, Sparkle, ArrowLeft, ChatCircleText, PencilSimple, Trash, Clock } from "@phosphor-icons/react";
 import { toast } from "sonner";
 
 const DISPOSITIONS = ["Connected", "Busy", "Not Reachable", "Wrong Number", "Interested", "Not Interested"];
 
 export default function LeadDetail() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const [lead, setLead] = useState(null);
   const [calls, setCalls] = useState([]);
   const [followups, setFollowups] = useState([]);
+  const [team, setTeam] = useState([]);
+  const [projects, setProjects] = useState([]);
   const [callForm, setCallForm] = useState({ duration_seconds: 0, disposition: "Connected", notes: "" });
   const [followupForm, setFollowupForm] = useState({ due_at: "", note: "" });
+  const [editOpen, setEditOpen] = useState(false);
+  const [editForm, setEditForm] = useState({});
   const [aiScore, setAiScore] = useState(null);
   const [aiNext, setAiNext] = useState(null);
   const [aiSummary, setAiSummary] = useState(null);
   const [aiBusy, setAiBusy] = useState(null);
 
+  const teamMap = useMemo(() => Object.fromEntries(team.map((m) => [m.id, m.full_name])), [team]);
+  const projectMap = useMemo(() => Object.fromEntries(projects.map((p) => [p.id, p.name])), [projects]);
+
   const load = async () => {
-    const [a, b, c] = await Promise.all([
+    const [a, b, c, t, p] = await Promise.all([
       api.get(`/leads/${id}`),
       api.get(`/calls`, { params: { lead_id: id } }),
       api.get(`/followups`, { params: { lead_id: id } }),
+      api.get(`/team`),
+      api.get(`/projects`),
     ]);
     setLead(a.data); setCalls(b.data); setFollowups(c.data);
+    setTeam(t.data); setProjects(p.data);
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [id]);
 
   const updateField = async (field, value) => {
-    const { data } = await api.patch(`/leads/${id}`, { [field]: value });
-    setLead(data); toast.success("Updated");
+    try {
+      const { data } = await api.patch(`/leads/${id}`, { [field]: value });
+      setLead(data); toast.success("Updated");
+    } catch (e) { toast.error("Update failed"); }
   };
 
   const onLogCall = async (e) => {
@@ -51,9 +69,44 @@ export default function LeadDetail() {
   const onAddFollowup = async (e) => {
     e.preventDefault();
     await api.post("/followups", { lead_id: id, due_at: followupForm.due_at, note: followupForm.note });
-    toast.success("Followup added");
+    toast.success("Follow-up added");
     setFollowupForm({ due_at: "", note: "" });
     await load();
+  };
+
+  const openEdit = () => {
+    setEditForm({
+      name: lead.name || "", mobile: lead.mobile || "", email: lead.email || "",
+      city: lead.city || "", budget: lead.budget || "", source: lead.source || "Website",
+      interested_project: lead.interested_project || "", assigned_to: lead.assigned_to || "",
+      followup_date: lead.followup_date ? lead.followup_date.slice(0, 16) : "",
+      notes: lead.notes || "",
+    });
+    setEditOpen(true);
+  };
+
+  const onEditSave = async (e) => {
+    e.preventDefault();
+    try {
+      const payload = {
+        ...editForm,
+        budget: editForm.budget ? Number(editForm.budget) : null,
+        interested_project: editForm.interested_project || null,
+        assigned_to: editForm.assigned_to || null,
+        followup_date: editForm.followup_date || null,
+        email: editForm.email || null,
+      };
+      const { data } = await api.patch(`/leads/${id}`, payload);
+      setLead(data); setEditOpen(false); toast.success("Lead updated");
+    } catch (err) { toast.error(err?.response?.data?.detail || "Update failed"); }
+  };
+
+  const onDelete = async () => {
+    try {
+      await api.delete(`/leads/${id}`);
+      toast.success("Lead deleted");
+      navigate("/app/leads");
+    } catch { toast.error("Delete failed"); }
   };
 
   const runAI = async (kind) => {
@@ -68,27 +121,51 @@ export default function LeadDetail() {
     setAiBusy(null);
   };
 
+  const u = (k) => (e) => setEditForm({ ...editForm, [k]: e?.target ? e.target.value : e });
+
   if (!lead) return <div className="text-muted-foreground">Loading…</div>;
 
   return (
     <div className="space-y-6" data-testid="lead-detail-page">
-      <div className="flex items-center gap-3">
-        <Link to="/app/leads" className="text-muted-foreground hover:text-foreground"><ArrowLeft size={18} /></Link>
-        <div>
-          <div className="text-xs uppercase tracking-[0.2em] font-bold text-muted-foreground">Lead</div>
-          <h1 className="font-heading text-2xl sm:text-3xl font-semibold tracking-tight">{lead.name}</h1>
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-3">
+          <Link to="/app/leads" className="text-muted-foreground hover:text-foreground"><ArrowLeft size={18} /></Link>
+          <div>
+            <div className="text-xs uppercase tracking-[0.2em] font-bold text-muted-foreground">Lead</div>
+            <h1 className="font-heading text-2xl sm:text-3xl font-semibold tracking-tight">{lead.name}</h1>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={openEdit} data-testid="edit-lead-btn"><PencilSimple size={14} className="mr-1" /> Edit</Button>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="outline" className="text-destructive hover:text-destructive" data-testid="delete-lead-btn"><Trash size={14} className="mr-1" /> Delete</Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Delete this lead?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This will permanently remove <span className="font-semibold">{lead.name}</span> and all their call logs & follow-ups. This action cannot be undone.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction onClick={onDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90" data-testid="confirm-delete-btn">Delete</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </div>
       </div>
 
       <div className="grid lg:grid-cols-3 gap-6">
         <Card className="lg:col-span-2 p-6 bg-surface border-border shadow-none">
           <div className="grid sm:grid-cols-2 gap-4">
-            <div><Label>Mobile</Label><div className="flex items-center gap-2 mt-1"><a href={`tel:${lead.mobile}`} className="text-accent font-medium flex items-center gap-1.5"><Phone size={14} /> {lead.mobile}</a></div></div>
+            <div><Label>Mobile</Label><div className="mt-1"><a href={`tel:${lead.mobile}`} className="text-accent font-medium flex items-center gap-1.5"><Phone size={14} /> {lead.mobile}</a></div></div>
             <div><Label>Email</Label><div className="mt-1 text-sm">{lead.email || "—"}</div></div>
             <div><Label>City</Label><div className="mt-1 text-sm">{lead.city || "—"}</div></div>
             <div><Label>Budget</Label><div className="mt-1 text-sm font-semibold">{fmtINR(lead.budget)}</div></div>
-            <div><Label>Property type</Label><div className="mt-1 text-sm">{lead.property_type || "—"}</div></div>
             <div><Label>Source</Label><div className="mt-1 text-sm">{lead.source}</div></div>
+            <div><Label>Interested Project</Label><div className="mt-1 text-sm">{projectMap[lead.interested_project] || "—"}</div></div>
             <div>
               <Label>Stage</Label>
               <Select value={lead.stage} onValueChange={(v) => updateField("stage", v)}>
@@ -97,15 +174,35 @@ export default function LeadDetail() {
               </Select>
             </div>
             <div>
-              <Label>Priority</Label>
-              <Select value={lead.priority || "Medium"} onValueChange={(v) => updateField("priority", v)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+              <Label>Assigned User</Label>
+              <Select value={lead.assigned_to || "_none"} onValueChange={(v) => updateField("assigned_to", v === "_none" ? null : v)}>
+                <SelectTrigger data-testid="lead-assigned-select"><SelectValue placeholder="Unassigned" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="High">High</SelectItem><SelectItem value="Medium">Medium</SelectItem><SelectItem value="Low">Low</SelectItem>
+                  <SelectItem value="_none">— Unassigned —</SelectItem>
+                  {team.map((m) => <SelectItem key={m.id} value={m.id}>{m.full_name} ({m.role})</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
-            <div className="sm:col-span-2"><Label>Notes</Label><Textarea value={lead.notes || ""} onChange={(e) => setLead({ ...lead, notes: e.target.value })} onBlur={() => updateField("notes", lead.notes)} rows={3} data-testid="lead-notes-textarea" /></div>
+            <div>
+              <Label>Next Follow-up</Label>
+              <Input
+                type="datetime-local"
+                value={lead.followup_date ? lead.followup_date.slice(0, 16) : ""}
+                onChange={(e) => setLead({ ...lead, followup_date: e.target.value })}
+                onBlur={() => updateField("followup_date", lead.followup_date || null)}
+                data-testid="lead-detail-followup-input"
+              />
+            </div>
+            <div className="sm:col-span-2">
+              <Label>Remarks</Label>
+              <Textarea
+                value={lead.notes || ""}
+                onChange={(e) => setLead({ ...lead, notes: e.target.value })}
+                onBlur={() => updateField("notes", lead.notes || "")}
+                rows={3}
+                data-testid="lead-notes-textarea"
+              />
+            </div>
           </div>
         </Card>
 
@@ -133,11 +230,41 @@ export default function LeadDetail() {
         </Card>
       </div>
 
-      <Tabs defaultValue="calls">
+      <Tabs defaultValue="followups">
         <TabsList>
+          <TabsTrigger value="followups" data-testid="tab-followups">Follow-ups ({followups.length})</TabsTrigger>
           <TabsTrigger value="calls" data-testid="tab-calls">Calls ({calls.length})</TabsTrigger>
-          <TabsTrigger value="followups" data-testid="tab-followups">Followups ({followups.length})</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="followups" className="space-y-4">
+          <Card className="p-5 bg-surface border-border shadow-none">
+            <div className="font-heading font-medium mb-3 flex items-center gap-2"><ChatCircleText size={18} /> Add follow-up note</div>
+            <form onSubmit={onAddFollowup} className="grid sm:grid-cols-3 gap-3">
+              <div><Label>Due date</Label><Input type="datetime-local" required value={followupForm.due_at} onChange={(e) => setFollowupForm({ ...followupForm, due_at: e.target.value })} data-testid="followup-due-input" /></div>
+              <div className="sm:col-span-2"><Label>Note</Label><Input value={followupForm.note} onChange={(e) => setFollowupForm({ ...followupForm, note: e.target.value })} data-testid="followup-note-input" /></div>
+              <div className="sm:col-span-3 flex justify-end"><Button type="submit" disabled={!followupForm.due_at} data-testid="add-followup-btn">Add follow-up</Button></div>
+            </form>
+          </Card>
+          <Card className="p-5 bg-surface border-border shadow-none">
+            <div className="font-heading font-medium mb-4 flex items-center gap-2"><Clock size={18} /> Follow-up history</div>
+            {followups.length ? (
+              <ol className="relative border-l border-border ml-2 space-y-4 pl-5">
+                {followups.map((f) => (
+                  <li key={f.id} className="relative" data-testid={`followup-${f.id}`}>
+                    <span className={`absolute -left-[26px] top-1 h-3 w-3 rounded-full border-2 border-background ${f.status === "Pending" ? "bg-warning" : "bg-success"}`} />
+                    <div className="text-sm font-medium">{new Date(f.due_at).toLocaleString()}</div>
+                    <div className="text-xs text-muted-foreground mt-0.5">{f.note || "No note"}</div>
+                    <div className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground mt-1">
+                      {f.status} • added {new Date(f.created_at).toLocaleDateString()}
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <div className="text-sm text-muted-foreground text-center py-6">No follow-ups yet.</div>
+            )}
+          </Card>
+        </TabsContent>
 
         <TabsContent value="calls" className="space-y-4">
           <Card className="p-5 bg-surface border-border shadow-none">
@@ -173,32 +300,59 @@ export default function LeadDetail() {
             </ul>
           </Card>
         </TabsContent>
-
-        <TabsContent value="followups" className="space-y-4">
-          <Card className="p-5 bg-surface border-border shadow-none">
-            <div className="font-heading font-medium mb-3 flex items-center gap-2"><ChatCircleText size={18} /> Schedule followup</div>
-            <form onSubmit={onAddFollowup} className="grid sm:grid-cols-3 gap-3">
-              <div><Label>Due date</Label><Input type="datetime-local" required value={followupForm.due_at} onChange={(e) => setFollowupForm({ ...followupForm, due_at: e.target.value })} data-testid="followup-due-input" /></div>
-              <div className="sm:col-span-2"><Label>Note</Label><Input value={followupForm.note} onChange={(e) => setFollowupForm({ ...followupForm, note: e.target.value })} /></div>
-              <div className="sm:col-span-3 flex justify-end"><Button type="submit" data-testid="add-followup-btn">Add</Button></div>
-            </form>
-          </Card>
-          <Card className="bg-surface border-border shadow-none">
-            <ul className="divide-y divide-border">
-              {followups.map((f) => (
-                <li key={f.id} className="p-4 flex items-center justify-between text-sm">
-                  <div>
-                    <div className="font-medium">{new Date(f.due_at).toLocaleString()}</div>
-                    <div className="text-xs text-muted-foreground">{f.note || "—"}</div>
-                  </div>
-                  <span className="text-xs uppercase font-bold tracking-wider text-muted-foreground">{f.status}</span>
-                </li>
-              ))}
-              {!followups.length && <li className="p-6 text-sm text-muted-foreground text-center">No followups.</li>}
-            </ul>
-          </Card>
-        </TabsContent>
       </Tabs>
+
+      {/* Edit Lead dialog */}
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader><DialogTitle>Edit Lead</DialogTitle></DialogHeader>
+          <form onSubmit={onEditSave} className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div><Label>Name</Label><Input required value={editForm.name} onChange={u("name")} data-testid="edit-lead-name" /></div>
+              <div><Label>Mobile</Label><Input required value={editForm.mobile} onChange={u("mobile")} data-testid="edit-lead-mobile" /></div>
+              <div><Label>Email</Label><Input type="email" value={editForm.email} onChange={u("email")} /></div>
+              <div><Label>City</Label><Input value={editForm.city} onChange={u("city")} /></div>
+              <div>
+                <Label>Source</Label>
+                <Select value={editForm.source} onValueChange={u("source")}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>{SOURCES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+              <div><Label>Budget (₹)</Label><Input type="number" value={editForm.budget} onChange={u("budget")} /></div>
+              <div>
+                <Label>Interested Project</Label>
+                <Select value={editForm.interested_project || "none"} onValueChange={(v) => u("interested_project")(v === "none" ? "" : v)}>
+                  <SelectTrigger><SelectValue placeholder="None" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">— None —</SelectItem>
+                    {projects.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Assigned User</Label>
+                <Select value={editForm.assigned_to || "none"} onValueChange={(v) => u("assigned_to")(v === "none" ? "" : v)}>
+                  <SelectTrigger><SelectValue placeholder="Unassigned" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">— Unassigned —</SelectItem>
+                    {team.map((m) => <SelectItem key={m.id} value={m.id}>{m.full_name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="col-span-2">
+                <Label>Next Follow-up</Label>
+                <Input type="datetime-local" value={editForm.followup_date || ""} onChange={u("followup_date")} />
+              </div>
+            </div>
+            <div><Label>Remarks</Label><Textarea rows={3} value={editForm.notes} onChange={u("notes")} /></div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button type="button" variant="outline" onClick={() => setEditOpen(false)}>Cancel</Button>
+              <Button type="submit" data-testid="save-edit-lead-btn">Save changes</Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

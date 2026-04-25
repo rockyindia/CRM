@@ -278,6 +278,7 @@ async def list_leads(stage: Optional[str] = None, q: Optional[str] = None, curre
         query["$or"] = [
             {"name": {"$regex": q, "$options": "i"}},
             {"mobile": {"$regex": q, "$options": "i"}},
+            {"city": {"$regex": q, "$options": "i"}},
             {"email": {"$regex": q, "$options": "i"}},
         ]
     leads = await db.leads.find(query, {"_id": 0}).sort("created_at", -1).to_list(2000)
@@ -294,9 +295,19 @@ async def get_lead(lead_id: str, current=Depends(get_current_user)):
 
 @api.patch("/leads/{lead_id}")
 async def update_lead(lead_id: str, payload: LeadUpdate, current=Depends(get_current_user)):
-    update_data = {k: v for k, v in payload.model_dump().items() if v is not None}
+    update_data = payload.model_dump(exclude_unset=True)
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
+    # Duplicate mobile check on edit
+    new_mobile = update_data.get("mobile")
+    if new_mobile:
+        dup = await db.leads.find_one({
+            "workspace_id": current["workspace_id"],
+            "mobile": new_mobile,
+            "id": {"$ne": lead_id},
+        })
+        if dup:
+            raise HTTPException(status_code=400, detail="Another lead with this mobile already exists")
     update_data["updated_at"] = now_iso()
     result = await db.leads.update_one(
         {"id": lead_id, "workspace_id": current["workspace_id"]}, {"$set": update_data}

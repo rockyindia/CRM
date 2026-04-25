@@ -42,6 +42,5 @@ export const STAGE_COLORS = {
 };
 
 export const SOURCES = [
-  "Manual", "Website", "Facebook Ads", "Instagram", "Google Ads",
-  "WhatsApp", "Walk-in", "Reference", "Property Portal", "Missed Call", "CSV Import",
+  "Facebook Ads", "Instagram", "Website", "Walk-in", "Reference", "Google Ads", "Other",
 ];
