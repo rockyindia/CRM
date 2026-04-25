@@ -16,6 +16,7 @@ import Team from "./pages/Team";
 import Reports from "./pages/Reports";
 import Settings from "./pages/Settings";
 import Followups from "./pages/Followups";
+import PublicCaptureForm from "./pages/PublicCaptureForm";
 import Landing from "./pages/Landing";
 
 function Protected({ children }) {
@@ -38,6 +39,7 @@ function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Landing />} />
+          <Route path="/capture/:token" element={<PublicCaptureForm />} />
           <Route path="/login" element={<PublicOnly><Login /></PublicOnly>} />
           <Route path="/signup" element={<PublicOnly><Signup /></PublicOnly>} />
           <Route path="/app" element={<Protected><AppLayout /></Protected>}>

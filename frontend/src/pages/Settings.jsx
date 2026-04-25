@@ -1,8 +1,14 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { useApp } from "../contexts/AppContext";
+import { api, API } from "../lib/api";
 import { Card } from "../components/ui/card";
-import { Check, Crown } from "@phosphor-icons/react";
+import { Check, Crown, Copy, ArrowsClockwise, Upload } from "@phosphor-icons/react";
 import { Button } from "../components/ui/button";
+import { Input } from "../components/ui/input";
+import { Label } from "../components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
+import { toast } from "sonner";
 
 const PLANS = [
   { key: "basic", name: "Basic", price: "₹999", users: "3 users", leads: "1,000 leads" },
@@ -11,23 +17,88 @@ const PLANS = [
   { key: "enterprise", name: "Enterprise", price: "Custom", users: "Custom", leads: "Custom" },
 ];
 
+function CopyField({ label, value, testid }) {
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(value); toast.success("Copied"); }
+    catch { toast.error("Copy failed"); }
+  };
+  return (
+    <div>
+      <Label>{label}</Label>
+      <div className="flex items-center gap-2 mt-1">
+        <Input value={value} readOnly className="font-mono text-xs" data-testid={testid} />
+        <Button type="button" size="sm" variant="outline" onClick={copy} data-testid={`${testid}-copy`}><Copy size={14} /></Button>
+      </div>
+    </div>
+  );
+}
+
 export default function Settings() {
-  const { user, workspace, theme, setTheme, lang, setLang } = useApp();
+  const { user, workspace: ctxWorkspace, theme, setTheme, lang, setLang } = useApp();
+  const [ws, setWs] = useState(null);
+  const [team, setTeam] = useState([]);
+  const [importOpen, setImportOpen] = useState(false);
+  const [csvText, setCsvText] = useState("");
+  const [importBusy, setImportBusy] = useState(false);
+  const [importResult, setImportResult] = useState(null);
+
+  const load = async () => {
+    const [a, b] = await Promise.all([api.get("/settings/workspace"), api.get("/team")]);
+    setWs(a.data); setTeam(b.data);
+  };
+  useEffect(() => { load(); }, []);
+
+  const setDefaultAssignee = async (id) => {
+    const { data } = await api.patch("/settings/workspace", { default_assignee_id: id });
+    setWs(data); toast.success("Default assignee updated");
+  };
+
+  const regenerateKey = async () => {
+    if (!window.confirm("Regenerate API key? Old webhooks using this key will stop working.")) return;
+    const { data } = await api.patch("/settings/workspace", { regenerate_api_key: true });
+    setWs(data); toast.success("API key regenerated");
+  };
+
+  const onFile = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setCsvText(String(reader.result || ""));
+    reader.readAsText(file);
+  };
+
+  const onImport = async () => {
+    setImportBusy(true); setImportResult(null);
+    try {
+      const { data } = await api.post("/leads/import", { csv_text: csvText });
+      setImportResult(data);
+      toast.success(`Imported: ${data.created} new, ${data.updated} updated`);
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || "Import failed");
+    }
+    setImportBusy(false);
+  };
+
+  if (!ws) return <div className="text-muted-foreground">Loading…</div>;
+
+  const origin = window.location.origin;
+  const webhookUrl = `${API}/webhooks/leads`;
+  const formUrl = `${origin}/capture/${ws.form_token}`;
+
   return (
     <div className="space-y-6" data-testid="settings-page">
       <div>
         <div className="text-xs uppercase tracking-[0.2em] font-bold text-muted-foreground mb-1">Settings</div>
-        <h1 className="font-heading text-3xl font-semibold tracking-tight">Workspace & billing</h1>
+        <h1 className="font-heading text-3xl font-semibold tracking-tight">Workspace, capture & billing</h1>
       </div>
 
       <div className="grid lg:grid-cols-3 gap-6">
         <Card className="p-6 bg-surface border-border shadow-none">
           <div className="font-heading font-medium mb-4">Workspace</div>
           <div className="space-y-3 text-sm">
-            <div><div className="text-xs text-muted-foreground uppercase tracking-wider">Name</div>{workspace?.name}</div>
-            <div><div className="text-xs text-muted-foreground uppercase tracking-wider">Plan</div><span className="capitalize font-semibold">{workspace?.plan}</span></div>
-            <div><div className="text-xs text-muted-foreground uppercase tracking-wider">User limit</div>{workspace?.user_limit}</div>
-            <div><div className="text-xs text-muted-foreground uppercase tracking-wider">Lead limit</div>{workspace?.lead_limit}</div>
+            <div><div className="text-xs text-muted-foreground uppercase tracking-wider">Name</div>{ws.name}</div>
+            <div><div className="text-xs text-muted-foreground uppercase tracking-wider">Plan</div><span className="capitalize font-semibold">{ws.plan}</span></div>
+            <div><div className="text-xs text-muted-foreground uppercase tracking-wider">Limits</div>{ws.user_limit} users • {ws.lead_limit} leads</div>
           </div>
         </Card>
         <Card className="p-6 bg-surface border-border shadow-none">
@@ -61,6 +132,61 @@ export default function Settings() {
         </Card>
       </div>
 
+      {/* Lead Capture */}
+      <Card className="p-6 bg-surface border-border shadow-none" data-testid="capture-settings">
+        <div className="flex items-end justify-between flex-wrap gap-3 mb-4">
+          <div>
+            <div className="text-xs uppercase tracking-[0.2em] font-bold text-muted-foreground">Lead Capture</div>
+            <div className="font-heading font-medium text-lg">Webhook, public form & CSV</div>
+          </div>
+          <Button variant="outline" onClick={() => { setImportOpen(true); setImportResult(null); setCsvText(""); }} data-testid="import-csv-btn"><Upload size={14} className="mr-2" />Import CSV</Button>
+        </div>
+
+        <div className="grid lg:grid-cols-2 gap-5">
+          <div className="space-y-3">
+            <CopyField label="Webhook URL (POST)" value={webhookUrl} testid="webhook-url" />
+            <div>
+              <Label>API Key (send as <code className="text-xs">x-api-key</code> header)</Label>
+              <div className="flex items-center gap-2 mt-1">
+                <Input value={ws.api_key || ""} readOnly className="font-mono text-xs" data-testid="api-key" />
+                <Button type="button" size="sm" variant="outline" onClick={async () => { await navigator.clipboard.writeText(ws.api_key); toast.success("Copied"); }} data-testid="api-key-copy"><Copy size={14} /></Button>
+                <Button type="button" size="sm" variant="outline" onClick={regenerateKey} title="Regenerate" data-testid="api-key-regen"><ArrowsClockwise size={14} /></Button>
+              </div>
+            </div>
+            <div>
+              <Label>Default assignee for captured leads</Label>
+              <Select value={ws.default_assignee_id || ""} onValueChange={setDefaultAssignee}>
+                <SelectTrigger data-testid="default-assignee-select"><SelectValue placeholder="Select" /></SelectTrigger>
+                <SelectContent>
+                  {team.map((m) => <SelectItem key={m.id} value={m.id}>{m.full_name} ({m.role})</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="space-y-3">
+            <CopyField label="Public Form URL" value={formUrl} testid="form-url" />
+            <a href={formUrl} target="_blank" rel="noreferrer" className="text-sm text-accent font-medium" data-testid="open-form-link">Open form in new tab →</a>
+            <div className="border border-border rounded-md p-3 text-xs bg-background">
+              <div className="font-semibold mb-1">Sample webhook payload</div>
+              <pre className="text-muted-foreground whitespace-pre-wrap font-mono">{`POST ${webhookUrl}
+Headers: x-api-key: <your key>
+
+{
+  "name": "Rohit Sharma",
+  "mobile": "9876543210",
+  "email": "rohit@example.com",
+  "city": "Bangalore",
+  "budget": 8500000,
+  "project_interest": "Skyline Residences",
+  "source": "Facebook",
+  "message": "Interested in 3BHK"
+}`}</pre>
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      {/* Plans */}
       <Card className="p-6 bg-surface border-border shadow-none">
         <div className="flex items-center justify-between mb-6">
           <div>
@@ -71,18 +197,55 @@ export default function Settings() {
         </div>
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {PLANS.map((p) => (
-            <div key={p.key} className={`border rounded-lg p-5 ${workspace?.plan === p.key ? "border-accent bg-background" : "border-border"}`}>
+            <div key={p.key} className={`border rounded-lg p-5 ${ws.plan === p.key ? "border-accent bg-background" : "border-border"}`}>
               <div className="font-heading font-semibold text-lg">{p.name}</div>
               <div className="font-heading text-2xl font-semibold mt-2">{p.price}<span className="text-xs text-muted-foreground">/mo</span></div>
               <div className="text-xs text-muted-foreground mt-1 mb-4">{p.users} • {p.leads}</div>
-              <Button className="w-full" variant={workspace?.plan === p.key ? "outline" : "default"} disabled data-testid={`plan-${p.key}-btn`}>
-                {workspace?.plan === p.key ? <><Check size={14} className="mr-1" /> Current</> : "Upgrade"}
+              <Button className="w-full" variant={ws.plan === p.key ? "outline" : "default"} disabled data-testid={`plan-${p.key}-btn`}>
+                {ws.plan === p.key ? <><Check size={14} className="mr-1" /> Current</> : "Upgrade"}
               </Button>
             </div>
           ))}
         </div>
         <p className="text-xs text-muted-foreground mt-4">Live Stripe checkout will be enabled in Phase 2 with switchable Razorpay support for India.</p>
       </Card>
+
+      {/* CSV Import dialog */}
+      <Dialog open={importOpen} onOpenChange={setImportOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader><DialogTitle>Import leads from CSV</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div className="text-xs text-muted-foreground">
+              CSV must contain columns: <code>name</code>, <code>mobile</code> (required), and any of:
+              <code> email, city, budget, project_interest, source, message</code>. Duplicates by mobile will be merged.
+            </div>
+            <Input type="file" accept=".csv,text/csv" onChange={onFile} data-testid="csv-file-input" />
+            <textarea
+              value={csvText}
+              onChange={(e) => setCsvText(e.target.value)}
+              rows={10}
+              placeholder="name,mobile,email,city,budget,source,message&#10;Rohit Sharma,9876543210,rohit@example.com,Bangalore,8500000,Facebook,Wants 3BHK"
+              className="w-full text-xs font-mono p-3 rounded-md border border-border bg-background"
+              data-testid="csv-textarea"
+            />
+            {importResult && (
+              <div className="text-sm border border-border rounded-md p-3" data-testid="import-result">
+                <div className="font-semibold mb-1">Import summary</div>
+                <div>Created: <span className="text-success font-semibold">{importResult.created}</span> • Updated: <span className="text-accent font-semibold">{importResult.updated}</span> • Errors: <span className="text-destructive font-semibold">{importResult.errors}</span></div>
+                {importResult.error_rows?.length > 0 && (
+                  <ul className="text-xs text-muted-foreground mt-2 list-disc pl-5">
+                    {importResult.error_rows.map((r, i) => <li key={i}>{r}</li>)}
+                  </ul>
+                )}
+              </div>
+            )}
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setImportOpen(false)}>Close</Button>
+              <Button onClick={onImport} disabled={!csvText.trim() || importBusy} data-testid="run-import-btn">{importBusy ? "Importing…" : "Import"}</Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

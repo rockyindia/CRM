@@ -208,6 +208,9 @@ async def signup(req: SignupReq):
         "user_limit": 3,
         "created_at": now_iso(),
         "branding": {"logo": None, "primary": "#0F172A"},
+        "api_key": "lek_" + uuid.uuid4().hex,
+        "form_token": uuid.uuid4().hex[:16],
+        "default_assignee_id": user_id,
     }
     user = {
         "id": user_id,
@@ -845,6 +848,166 @@ async def seed_demo(current=Depends(get_current_user)):
 @api.get("/")
 async def root():
     return {"app": "LeadEmpire CRM", "version": "1.0.0"}
+
+
+# ============ LEAD CAPTURE (Webhook + Public Form + CSV) ============
+WEBHOOK_SOURCES = {"Facebook", "Google", "Website", "WordPress", "99acres", "MagicBricks", "Housing", "Manual", "Other"}
+
+
+async def _ensure_workspace_keys(ws: Dict[str, Any]) -> Dict[str, Any]:
+    updates: Dict[str, Any] = {}
+    if not ws.get("api_key"):
+        updates["api_key"] = "lek_" + uuid.uuid4().hex
+    if not ws.get("form_token"):
+        updates["form_token"] = uuid.uuid4().hex[:16]
+    if not ws.get("default_assignee_id"):
+        updates["default_assignee_id"] = ws.get("owner_id")
+    if updates:
+        await db.workspaces.update_one({"id": ws["id"]}, {"$set": updates})
+        ws.update(updates)
+    return ws
+
+
+async def _capture_lead(workspace_id: str, payload: Dict[str, Any], default_assignee: str) -> Dict[str, Any]:
+    name = (payload.get("name") or "").strip()
+    mobile = (payload.get("mobile") or "").strip()
+    if not name or not mobile:
+        raise HTTPException(status_code=400, detail="name and mobile are required")
+    source = payload.get("source") or "Other"
+    if source not in WEBHOOK_SOURCES:
+        source = "Other"
+    today_due = datetime.now(timezone.utc).replace(hour=18, minute=0, second=0, microsecond=0).isoformat()
+    msg_note = payload.get("message") or payload.get("notes") or ""
+    extra_score = payload.get("lead_score")
+    project_interest = payload.get("project_interest") or payload.get("interested_project")
+    existing = await db.leads.find_one({"workspace_id": workspace_id, "mobile": mobile})
+    if existing:
+        upd: Dict[str, Any] = {"updated_at": now_iso()}
+        for f, src in (("email", payload.get("email")), ("city", payload.get("city")),
+                       ("budget", payload.get("budget")), ("interested_project", project_interest)):
+            if src and not existing.get(f):
+                upd[f] = float(src) if f == "budget" else src
+        if msg_note:
+            old = existing.get("notes") or ""
+            stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+            upd["notes"] = (old + ("\n" if old else "") + f"[{stamp} {source}] {msg_note}").strip()
+        if extra_score is not None and not existing.get("score"):
+            upd["score"] = extra_score
+        await db.leads.update_one({"id": existing["id"]}, {"$set": upd})
+        pending = await db.followups.count_documents({"workspace_id": workspace_id, "lead_id": existing["id"], "status": "Pending"})
+        if pending == 0:
+            await db.followups.insert_one({
+                "id": new_id(), "workspace_id": workspace_id,
+                "user_id": existing.get("assigned_to") or default_assignee,
+                "lead_id": existing["id"], "due_at": today_due,
+                "note": f"Re-captured via {source}: {msg_note[:120]}" if msg_note else f"Re-captured via {source}",
+                "status": "Pending", "created_at": now_iso(),
+            })
+            await db.leads.update_one({"id": existing["id"]}, {"$set": {"followup_date": today_due}})
+        return {"status": "updated", "lead_id": existing["id"], "duplicate": True}
+    lead_id = new_id()
+    lead = {
+        "id": lead_id, "workspace_id": workspace_id, "name": name, "mobile": mobile,
+        "email": payload.get("email") or None, "city": payload.get("city") or None,
+        "budget": float(payload["budget"]) if payload.get("budget") not in (None, "") else None,
+        "interested_project": project_interest or None,
+        "source": source, "stage": "New", "priority": "Medium",
+        "notes": msg_note or None, "assigned_to": default_assignee,
+        "followup_date": today_due, "score": extra_score,
+        "created_by": default_assignee, "created_at": now_iso(), "updated_at": now_iso(),
+    }
+    await db.leads.insert_one(lead)
+    await db.followups.insert_one({
+        "id": new_id(), "workspace_id": workspace_id, "user_id": default_assignee,
+        "lead_id": lead_id, "due_at": today_due,
+        "note": f"New lead from {source}: {msg_note[:120]}" if msg_note else f"New lead from {source}",
+        "status": "Pending", "created_at": now_iso(),
+    })
+    return {"status": "created", "lead_id": lead_id, "duplicate": False}
+
+
+@api.post("/webhooks/leads")
+async def webhook_capture(payload: Dict[str, Any], x_api_key: Optional[str] = Header(None)):
+    if not x_api_key:
+        raise HTTPException(status_code=401, detail="x-api-key header required")
+    ws = await db.workspaces.find_one({"api_key": x_api_key}, {"_id": 0})
+    if not ws:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    return await _capture_lead(ws["id"], payload, ws.get("default_assignee_id") or ws.get("owner_id"))
+
+
+@api.post("/public/forms/{form_token}/leads")
+async def public_form_capture(form_token: str, payload: Dict[str, Any]):
+    ws = await db.workspaces.find_one({"form_token": form_token}, {"_id": 0})
+    if not ws:
+        raise HTTPException(status_code=404, detail="Form not found")
+    return await _capture_lead(ws["id"], payload, ws.get("default_assignee_id") or ws.get("owner_id"))
+
+
+@api.get("/public/forms/{form_token}")
+async def public_form_meta(form_token: str):
+    ws = await db.workspaces.find_one({"form_token": form_token}, {"_id": 0, "api_key": 0})
+    if not ws:
+        raise HTTPException(status_code=404, detail="Form not found")
+    return {"workspace_name": ws["name"], "form_token": form_token}
+
+
+@api.get("/settings/workspace")
+async def get_workspace_settings(current=Depends(get_current_user)):
+    ws = await db.workspaces.find_one({"id": current["workspace_id"]}, {"_id": 0})
+    ws = await _ensure_workspace_keys(ws)
+    return ws
+
+
+class WorkspaceSettingsUpdate(BaseModel):
+    default_assignee_id: Optional[str] = None
+    regenerate_api_key: Optional[bool] = False
+
+
+@api.patch("/settings/workspace")
+async def update_workspace_settings(payload: WorkspaceSettingsUpdate, current=Depends(get_current_user)):
+    if current["role"] not in ("owner", "manager"):
+        raise HTTPException(status_code=403, detail="Not authorized")
+    upd: Dict[str, Any] = {}
+    if payload.default_assignee_id:
+        upd["default_assignee_id"] = payload.default_assignee_id
+    if payload.regenerate_api_key:
+        upd["api_key"] = "lek_" + uuid.uuid4().hex
+    if upd:
+        await db.workspaces.update_one({"id": current["workspace_id"]}, {"$set": upd})
+    ws = await db.workspaces.find_one({"id": current["workspace_id"]}, {"_id": 0})
+    return ws
+
+
+@api.post("/leads/import")
+async def csv_import_leads(body: Dict[str, Any], current=Depends(get_current_user)):
+    import csv, io
+    csv_text = body.get("csv_text") or ""
+    if not csv_text.strip():
+        raise HTTPException(status_code=400, detail="csv_text is empty")
+    ws = await db.workspaces.find_one({"id": current["workspace_id"]}, {"_id": 0})
+    default_assignee = (ws or {}).get("default_assignee_id") or current["id"]
+    reader = csv.DictReader(io.StringIO(csv_text))
+    headers = [h.strip().lower() for h in (reader.fieldnames or [])]
+    if "name" not in headers or "mobile" not in headers:
+        raise HTTPException(status_code=400, detail="CSV must include 'name' and 'mobile' columns")
+    created = updated = errors = 0
+    error_rows: List[str] = []
+    for i, row in enumerate(reader, start=2):
+        normalized = {(k or "").strip().lower(): (v or "").strip() for k, v in row.items()}
+        try:
+            res = await _capture_lead(current["workspace_id"], normalized, default_assignee)
+            if res["status"] == "created":
+                created += 1
+            else:
+                updated += 1
+        except HTTPException as e:
+            errors += 1
+            error_rows.append(f"Row {i}: {e.detail}")
+        except Exception as e:  # noqa
+            errors += 1
+            error_rows.append(f"Row {i}: {str(e)[:120]}")
+    return {"created": created, "updated": updated, "errors": errors, "error_rows": error_rows[:20]}
 
 
 app.include_router(api)
