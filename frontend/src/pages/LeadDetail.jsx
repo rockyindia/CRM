@@ -45,21 +45,25 @@ export default function LeadDetail() {
   const [callStatus, setCallStatus] = useState("Not Picked");
   const [callRemark, setCallRemark] = useState("");
   const [callNextFu, setCallNextFu] = useState("");
+  const [callStatusOptions, setCallStatusOptions] = useState(CALL_STATUSES);
 
   const teamMap = useMemo(() => Object.fromEntries(team.map((m) => [m.id, m.full_name])), [team]);
   const projectMap = useMemo(() => Object.fromEntries(projects.map((p) => [p.id, p.name])), [projects]);
 
   const load = async () => {
-    const [a, b, c, t, p, h] = await Promise.all([
+    const [a, b, c, t, p, h, cs] = await Promise.all([
       api.get(`/leads/${id}`),
       api.get(`/calls`, { params: { lead_id: id } }),
       api.get(`/followups`, { params: { lead_id: id } }),
       api.get(`/team`),
       api.get(`/projects`),
       api.get(`/leads/${id}/history`),
+      api.get(`/call-statuses`),
     ]);
     setLead(a.data); setCalls(b.data); setFollowups(c.data);
     setTeam(t.data); setProjects(p.data); setHistory(h.data);
+    const labels = (cs.data || []).map((x) => x.label).filter(Boolean);
+    setCallStatusOptions(labels.length ? labels : CALL_STATUSES);
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [id]);
 
@@ -148,7 +152,8 @@ export default function LeadDetail() {
 
   // Telecalling: open the Call Status popup (and try to dial on mobile devices).
   const onClickCall = () => {
-    setCallStatus("Not Picked"); setCallRemark(""); setCallNextFu("");
+    setCallStatus(callStatusOptions[0] || "Not Picked");
+    setCallRemark(""); setCallNextFu("");
     setCallPopupOpen(true);
     // tel: is a no-op on desktop browsers but triggers the dialer on mobile.
     if (typeof window !== "undefined" && /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent || "")) {
@@ -477,7 +482,7 @@ export default function LeadDetail() {
               <Label>Status</Label>
               <Select value={callStatus} onValueChange={setCallStatus}>
                 <SelectTrigger data-testid="call-status-select"><SelectValue /></SelectTrigger>
-                <SelectContent>{CALL_STATUSES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+                <SelectContent>{callStatusOptions.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
               </Select>
             </div>
             <div>

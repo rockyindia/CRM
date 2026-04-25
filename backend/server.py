@@ -910,6 +910,85 @@ async def root():
     return {"app": "LeadEmpire CRM", "version": "1.0.0"}
 
 
+# ============ CALL STATUS LABELS (Workspace-scoped, Owner-managed) ============
+DEFAULT_CALL_STATUSES = ["Not Picked", "Interested", "Busy", "Call Later", "Site Visit", "Wrong Number"]
+
+
+class CallStatusCreate(BaseModel):
+    label: str
+
+
+class CallStatusUpdate(BaseModel):
+    label: str
+
+
+@api.get("/call-statuses")
+async def list_call_statuses(current=Depends(get_current_user)):
+    """List custom labels for the workspace. Returns defaults if none defined yet."""
+    items = await db.call_statuses.find(
+        {"workspace_id": current["workspace_id"]}, {"_id": 0}
+    ).sort("created_at", 1).to_list(200)
+    if not items:
+        return [{"id": f"_default_{i}", "label": s, "is_default": True}
+                for i, s in enumerate(DEFAULT_CALL_STATUSES)]
+    return items
+
+
+@api.post("/call-statuses")
+async def create_call_status(payload: CallStatusCreate, current=Depends(get_current_user)):
+    if current.get("role") != "owner":
+        raise HTTPException(status_code=403, detail="Only owner can manage call status labels")
+    label = (payload.label or "").strip()
+    if not label:
+        raise HTTPException(status_code=400, detail="Label is required")
+    dup = await db.call_statuses.find_one({"workspace_id": current["workspace_id"], "label": label})
+    if dup:
+        raise HTTPException(status_code=400, detail="Label already exists")
+    item = {
+        "id": new_id(),
+        "workspace_id": current["workspace_id"],
+        "label": label,
+        "created_at": now_iso(),
+    }
+    await db.call_statuses.insert_one(item)
+    item.pop("_id", None)
+    return item
+
+
+@api.patch("/call-statuses/{status_id}")
+async def update_call_status(status_id: str, payload: CallStatusUpdate, current=Depends(get_current_user)):
+    if current.get("role") != "owner":
+        raise HTTPException(status_code=403, detail="Only owner can manage call status labels")
+    label = (payload.label or "").strip()
+    if not label:
+        raise HTTPException(status_code=400, detail="Label is required")
+    dup = await db.call_statuses.find_one({
+        "workspace_id": current["workspace_id"], "label": label, "id": {"$ne": status_id},
+    })
+    if dup:
+        raise HTTPException(status_code=400, detail="Label already exists")
+    res = await db.call_statuses.update_one(
+        {"id": status_id, "workspace_id": current["workspace_id"]},
+        {"$set": {"label": label, "updated_at": now_iso()}},
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Label not found")
+    item = await db.call_statuses.find_one({"id": status_id}, {"_id": 0})
+    return item
+
+
+@api.delete("/call-statuses/{status_id}")
+async def delete_call_status(status_id: str, current=Depends(get_current_user)):
+    if current.get("role") != "owner":
+        raise HTTPException(status_code=403, detail="Only owner can manage call status labels")
+    res = await db.call_statuses.delete_one(
+        {"id": status_id, "workspace_id": current["workspace_id"]}
+    )
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Label not found")
+    return {"ok": True}
+
+
 # ============ LEAD CAPTURE (Webhook + Public Form + CSV) ============
 WEBHOOK_SOURCES = {"Facebook", "Google", "Website", "WordPress", "99acres", "MagicBricks", "Housing", "Manual", "Other"}
 

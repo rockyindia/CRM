@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useApp } from "../contexts/AppContext";
 import { api, API } from "../lib/api";
 import { Card } from "../components/ui/card";
-import { Check, Crown, Copy, ArrowsClockwise, Upload } from "@phosphor-icons/react";
+import { Check, Crown, Copy, ArrowsClockwise, Upload, Plus, Trash, PencilSimple } from "@phosphor-icons/react";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
@@ -41,12 +41,60 @@ export default function Settings() {
   const [csvText, setCsvText] = useState("");
   const [importBusy, setImportBusy] = useState(false);
   const [importResult, setImportResult] = useState(null);
+  // Call status labels
+  const [callStatuses, setCallStatuses] = useState([]);
+  const [newLabel, setNewLabel] = useState("");
+  const [editingId, setEditingId] = useState(null);
+  const [editingLabel, setEditingLabel] = useState("");
 
   const load = async () => {
-    const [a, b] = await Promise.all([api.get("/settings/workspace"), api.get("/team")]);
-    setWs(a.data); setTeam(b.data);
+    const [a, b, c] = await Promise.all([
+      api.get("/settings/workspace"),
+      api.get("/team"),
+      api.get("/call-statuses"),
+    ]);
+    setWs(a.data); setTeam(b.data); setCallStatuses(c.data);
   };
   useEffect(() => { load(); }, []);
+
+  const reloadStatuses = async () => {
+    const { data } = await api.get("/call-statuses");
+    setCallStatuses(data);
+  };
+
+  const addLabel = async () => {
+    const label = newLabel.trim();
+    if (!label) return;
+    try {
+      await api.post("/call-statuses", { label });
+      toast.success("Label added");
+      setNewLabel("");
+      await reloadStatuses();
+    } catch (err) { toast.error(err?.response?.data?.detail || "Failed"); }
+  };
+
+  const startEdit = (s) => { setEditingId(s.id); setEditingLabel(s.label); };
+  const cancelEdit = () => { setEditingId(null); setEditingLabel(""); };
+
+  const saveEdit = async () => {
+    const label = editingLabel.trim();
+    if (!label) return;
+    try {
+      await api.patch(`/call-statuses/${editingId}`, { label });
+      toast.success("Label updated");
+      cancelEdit();
+      await reloadStatuses();
+    } catch (err) { toast.error(err?.response?.data?.detail || "Failed"); }
+  };
+
+  const deleteLabel = async (s) => {
+    if (!window.confirm(`Delete label "${s.label}"?`)) return;
+    try {
+      await api.delete(`/call-statuses/${s.id}`);
+      toast.success("Label deleted");
+      await reloadStatuses();
+    } catch (err) { toast.error(err?.response?.data?.detail || "Failed"); }
+  };
 
   const setDefaultAssignee = async (id) => {
     const { data } = await api.patch("/settings/workspace", { default_assignee_id: id });
@@ -184,6 +232,70 @@ Headers: x-api-key: <your key>
             </div>
           </div>
         </div>
+      </Card>
+
+      {/* Call Status Labels */}
+      <Card className="p-6 bg-surface border-border shadow-none" data-testid="call-statuses-settings">
+        <div className="flex items-end justify-between flex-wrap gap-3 mb-4">
+          <div>
+            <div className="text-xs uppercase tracking-[0.2em] font-bold text-muted-foreground">Telecalling</div>
+            <div className="font-heading font-medium text-lg">Call Status Labels</div>
+            <p className="text-xs text-muted-foreground mt-1">
+              Used in the Lead Detail call popup. {user?.role === "owner" ? "Add, edit or remove labels for your team." : "Only the owner can manage these."}
+            </p>
+          </div>
+        </div>
+
+        <ul className="divide-y divide-border border border-border rounded-md bg-background">
+          {callStatuses.map((s) => {
+            const isDefault = !!s.is_default;
+            const isEditing = editingId === s.id;
+            return (
+              <li key={s.id} className="flex items-center justify-between gap-3 px-4 py-2.5" data-testid={`call-status-row-${s.id}`}>
+                {isEditing ? (
+                  <Input value={editingLabel} onChange={(e) => setEditingLabel(e.target.value)} className="h-8 max-w-xs" data-testid="call-status-edit-input" />
+                ) : (
+                  <span className="text-sm">
+                    {s.label}
+                    {isDefault && <span className="ml-2 text-[10px] uppercase tracking-wider text-muted-foreground">default</span>}
+                  </span>
+                )}
+                {user?.role === "owner" && !isDefault && (
+                  <div className="flex items-center gap-1">
+                    {isEditing ? (
+                      <>
+                        <Button size="sm" onClick={saveEdit} disabled={!editingLabel.trim()} data-testid="call-status-save-edit">Save</Button>
+                        <Button size="sm" variant="ghost" onClick={cancelEdit}>Cancel</Button>
+                      </>
+                    ) : (
+                      <>
+                        <Button size="sm" variant="ghost" onClick={() => startEdit(s)} data-testid={`call-status-edit-${s.id}`}><PencilSimple size={14} /></Button>
+                        <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => deleteLabel(s)} data-testid={`call-status-delete-${s.id}`}><Trash size={14} /></Button>
+                      </>
+                    )}
+                  </div>
+                )}
+              </li>
+            );
+          })}
+          {!callStatuses.length && (
+            <li className="px-4 py-6 text-sm text-muted-foreground text-center">No labels.</li>
+          )}
+        </ul>
+
+        {user?.role === "owner" && (
+          <div className="flex items-center gap-2 mt-4">
+            <Input
+              placeholder="New label e.g. Answered Voicemail"
+              value={newLabel}
+              onChange={(e) => setNewLabel(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addLabel(); } }}
+              className="max-w-sm"
+              data-testid="call-status-new-input"
+            />
+            <Button onClick={addLabel} disabled={!newLabel.trim()} data-testid="call-status-add-btn"><Plus size={14} className="mr-1" /> Add</Button>
+          </div>
+        )}
       </Card>
 
       {/* Plans */}
