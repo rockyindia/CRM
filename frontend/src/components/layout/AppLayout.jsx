@@ -3,7 +3,7 @@ import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useApp } from "../../contexts/AppContext";
 import {
   House, UsersThree, Kanban, Buildings, Calendar, Receipt,
-  ChartBar, Gear, Sun, Moon, SignOut, List, X, Translate, Crown, Bell
+  ChartBar, Gear, Sun, Moon, SignOut, List, X, Translate, Crown, Bell, ShieldCheck
 } from "@phosphor-icons/react";
 import { Button } from "../ui/button";
 
@@ -18,6 +18,7 @@ const NAV = [
   { to: "/app/team", icon: UsersThree, key: "team" },
   { to: "/app/reports", icon: ChartBar, key: "reports" },
   { to: "/app/settings", icon: Gear, key: "settings" },
+  { to: "/app/admin", icon: ShieldCheck, key: "admin", ownerOnly: true },
 ];
 
 export default function AppLayout() {
@@ -51,7 +52,7 @@ export default function AppLayout() {
           </button>
         </div>
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto scrollbar-thin">
-          {NAV.map((n) => (
+          {NAV.filter((n) => !n.ownerOnly || user?.role === "owner").map((n) => (
             <NavLink
               key={n.to}
               to={n.to}

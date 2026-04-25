@@ -18,6 +18,7 @@ import Settings from "./pages/Settings";
 import Followups from "./pages/Followups";
 import PublicCaptureForm from "./pages/PublicCaptureForm";
 import Landing from "./pages/Landing";
+import Admin from "./pages/Admin";
 
 function Protected({ children }) {
   const { user, loading } = useApp();
@@ -54,6 +55,7 @@ function App() {
             <Route path="team" element={<Team />} />
             <Route path="reports" element={<Reports />} />
             <Route path="settings" element={<Settings />} />
+            <Route path="admin" element={<Admin />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

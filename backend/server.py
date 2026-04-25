@@ -277,6 +277,12 @@ async def create_lead(payload: LeadCreate, current=Depends(get_current_user)):
     dup = await db.leads.find_one({"workspace_id": current["workspace_id"], "mobile": payload.mobile})
     if dup:
         return {"duplicate": True, "lead_id": dup["id"]}
+    # Enforce workspace lead limit (counts only existing leads — duplicate updates above bypass this)
+    ws = await db.workspaces.find_one({"id": current["workspace_id"]}, {"_id": 0}) or {}
+    lead_limit = ws.get("lead_limit") or 1000
+    current_leads = await db.leads.count_documents({"workspace_id": current["workspace_id"]})
+    if current_leads >= lead_limit:
+        raise HTTPException(status_code=400, detail=f"Lead limit reached ({lead_limit}). Upgrade your plan or increase the limit in Admin.")
     lead = payload.model_dump()
     # Sales users can only create leads assigned to themselves
     if not _is_owner(current):
@@ -677,6 +683,12 @@ async def list_team(current=Depends(get_current_user)):
 async def add_team_member(body: Dict[str, Any], current=Depends(get_current_user)):
     if current["role"] not in ["owner", "manager"]:
         raise HTTPException(status_code=403, detail="Not authorized")
+    # Enforce workspace user limit
+    ws = await db.workspaces.find_one({"id": current["workspace_id"]}, {"_id": 0})
+    user_limit = (ws or {}).get("user_limit") or 5
+    current_count = await db.users.count_documents({"workspace_id": current["workspace_id"]})
+    if current_count >= user_limit:
+        raise HTTPException(status_code=400, detail=f"User limit reached ({user_limit}). Increase the limit in Admin → Plan limits.")
     email = body.get("email", "").lower()
     if await db.users.find_one({"email": email}):
         raise HTTPException(status_code=400, detail="Email already used")
@@ -695,6 +707,107 @@ async def add_team_member(body: Dict[str, Any], current=Depends(get_current_user
     u.pop("_id", None)
     u.pop("password", None)
     return u
+
+
+# ============ ADMIN PANEL (Owner-only SaaS controls) ============
+async def _require_owner(current: Dict[str, Any]) -> None:
+    if current.get("role") != "owner":
+        raise HTTPException(status_code=403, detail="Owner only")
+
+
+@api.get("/admin/overview")
+async def admin_overview(current=Depends(get_current_user)):
+    await _require_owner(current)
+    ws = await db.workspaces.find_one({"id": current["workspace_id"]}, {"_id": 0}) or {}
+    total_users = await db.users.count_documents({"workspace_id": current["workspace_id"]})
+    total_leads = await db.leads.count_documents({"workspace_id": current["workspace_id"]})
+    plan = (ws.get("plan") or "trial").lower()
+    status_label = "Trial" if plan == "trial" else "Active"
+    return {
+        "company_name": ws.get("name"),
+        "created_at": ws.get("created_at"),
+        "plan": plan,
+        "status": status_label,
+        "total_users": total_users,
+        "total_leads": total_leads,
+        "user_limit": ws.get("user_limit") or 5,
+        "lead_limit": ws.get("lead_limit") or 1000,
+    }
+
+
+class AdminUserCreate(BaseModel):
+    full_name: str
+    email: EmailStr
+    password: Optional[str] = "Welcome@123"
+    role: str = "sales_user"  # owner | sales_user (legacy roles still respected)
+
+
+@api.post("/admin/users")
+async def admin_create_user(payload: AdminUserCreate, current=Depends(get_current_user)):
+    await _require_owner(current)
+    ws = await db.workspaces.find_one({"id": current["workspace_id"]}, {"_id": 0}) or {}
+    user_limit = ws.get("user_limit") or 5
+    current_count = await db.users.count_documents({"workspace_id": current["workspace_id"]})
+    if current_count >= user_limit:
+        raise HTTPException(status_code=400, detail=f"User limit reached ({user_limit}). Increase the limit first.")
+    email = payload.email.lower()
+    if await db.users.find_one({"email": email}):
+        raise HTTPException(status_code=400, detail="Email already used")
+    role = payload.role if payload.role in ("owner", "sales_user", "manager", "executive", "telecaller") else "sales_user"
+    u = {
+        "id": new_id(),
+        "workspace_id": current["workspace_id"],
+        "email": email,
+        "full_name": payload.full_name,
+        "password": hash_password(payload.password or "Welcome@123"),
+        "role": role,
+        "active": True,
+        "created_at": now_iso(),
+    }
+    await db.users.insert_one(u)
+    u.pop("_id", None); u.pop("password", None)
+    return u
+
+
+@api.delete("/admin/users/{user_id}")
+async def admin_delete_user(user_id: str, current=Depends(get_current_user)):
+    await _require_owner(current)
+    if user_id == current["id"]:
+        raise HTTPException(status_code=400, detail="You cannot remove yourself")
+    target = await db.users.find_one({"id": user_id, "workspace_id": current["workspace_id"]})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    if target.get("role") == "owner":
+        raise HTTPException(status_code=400, detail="Cannot remove an owner")
+    await db.users.delete_one({"id": user_id, "workspace_id": current["workspace_id"]})
+    return {"ok": True}
+
+
+class AdminLimitsUpdate(BaseModel):
+    user_limit: Optional[int] = None
+    lead_limit: Optional[int] = None
+    plan: Optional[str] = None  # trial | active
+
+
+@api.patch("/admin/limits")
+async def admin_update_limits(payload: AdminLimitsUpdate, current=Depends(get_current_user)):
+    await _require_owner(current)
+    upd: Dict[str, Any] = {}
+    if payload.user_limit is not None:
+        if payload.user_limit < 1:
+            raise HTTPException(status_code=400, detail="User limit must be at least 1")
+        upd["user_limit"] = int(payload.user_limit)
+    if payload.lead_limit is not None:
+        if payload.lead_limit < 0:
+            raise HTTPException(status_code=400, detail="Lead limit cannot be negative")
+        upd["lead_limit"] = int(payload.lead_limit)
+    if payload.plan and payload.plan.lower() in ("trial", "active"):
+        upd["plan"] = payload.plan.lower()
+    if not upd:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+    await db.workspaces.update_one({"id": current["workspace_id"]}, {"$set": upd})
+    ws = await db.workspaces.find_one({"id": current["workspace_id"]}, {"_id": 0})
+    return ws
 
 
 # ============ DASHBOARD / REPORTS ============
@@ -1061,6 +1174,12 @@ async def _capture_lead(
             # Caller explicitly requested a follow-up date — refresh the lead's next-FU pointer.
             await db.leads.update_one({"id": existing["id"]}, {"$set": {"followup_date": force_followup_at}})
         return {"status": "updated", "lead_id": existing["id"], "duplicate": True}
+    # New lead path — enforce workspace lead limit
+    ws_doc = await db.workspaces.find_one({"id": workspace_id}, {"_id": 0}) or {}
+    lead_limit = ws_doc.get("lead_limit") or 1000
+    current_leads = await db.leads.count_documents({"workspace_id": workspace_id})
+    if current_leads >= lead_limit:
+        raise HTTPException(status_code=400, detail=f"Lead limit reached ({lead_limit}). Upgrade your plan or increase the limit in Admin.")
     lead_id = new_id()
     lead = {
         "id": lead_id, "workspace_id": workspace_id, "name": name, "mobile": mobile,
