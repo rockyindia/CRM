@@ -36,6 +36,15 @@ Build a multi-tenant SaaS Real Estate CRM + Telecalling + Sales Automation platf
 ### Multi-tenancy
 - All data scoped via `workspace_id` (verified by tests)
 
+### Roles (minimal — added Feb 2026)
+- `owner` — sees all leads, follow-ups, and dashboard stats in workspace.
+- Any non-owner role (e.g. `executive`) is treated as **Sales User**: sees only
+  leads where `assigned_to == user.id`; sees only own follow-ups. Cannot
+  reassign leads (only owner can change `assigned_to`).
+- Endpoints scoped: `GET/PATCH/DELETE /api/leads`, `/api/leads/{id}`,
+  `/api/leads/{id}/history`, `/api/dashboard/stats`. Followup scoping was
+  already in place via `user_id`.
+
 ## Test Results
 - Backend pytest: **16/16 PASS** — auth, leads, calls, followups, inventory, site-visits, bookings, payments, dashboard stats, AI endpoints, demo seed, multi-tenant isolation.
 - Frontend: 5/5 page renders pass.

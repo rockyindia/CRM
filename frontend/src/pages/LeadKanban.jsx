@@ -5,7 +5,7 @@ import {
   DndContext, useDraggable, useDroppable,
   PointerSensor, TouchSensor, MouseSensor, useSensor, useSensors,
 } from "@dnd-kit/core";
-import { Phone, ArrowSquareOut, BellPlus, X } from "@phosphor-icons/react";
+import { Phone, ArrowSquareOut, BellRinging, X } from "@phosphor-icons/react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -40,7 +40,7 @@ function LeadCard({ lead, onAddFollowup }) {
           <ArrowSquareOut size={12} /> Open
         </Link>
         <button onClick={(e) => { e.stopPropagation(); onAddFollowup(lead); }} className="flex-1 inline-flex items-center justify-center gap-1 h-7 text-xs font-medium rounded border border-border hover:bg-surface-hover" data-testid={`kanban-fu-${lead.id}`}>
-          <BellPlus size={12} /> Follow-up
+          <BellRinging size={12} /> Follow-up
         </button>
       </div>
     </div>

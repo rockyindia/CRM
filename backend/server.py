@@ -251,6 +251,25 @@ async def me(current=Depends(get_current_user)):
     return {"user": current, "workspace": workspace}
 
 
+# ============ ROLE HELPERS ============
+# Minimal role model: "owner" sees everything in the workspace.
+# Anyone else (sales_user / executive / telecaller / manager / ...) sees only
+# leads assigned to them, and only their own follow-ups.
+def _is_owner(user: Dict[str, Any]) -> bool:
+    return user.get("role") == "owner"
+
+
+def _is_sales_user(user: Dict[str, Any]) -> bool:
+    return not _is_owner(user)
+
+
+def _scope_lead_query(query: Dict[str, Any], user: Dict[str, Any]) -> Dict[str, Any]:
+    """Restrict a leads-collection query to leads assigned to the user, unless owner."""
+    if not _is_owner(user):
+        query["assigned_to"] = user["id"]
+    return query
+
+
 # ============ LEADS ============
 @api.post("/leads")
 async def create_lead(payload: LeadCreate, current=Depends(get_current_user)):
@@ -259,6 +278,9 @@ async def create_lead(payload: LeadCreate, current=Depends(get_current_user)):
     if dup:
         return {"duplicate": True, "lead_id": dup["id"]}
     lead = payload.model_dump()
+    # Sales users can only create leads assigned to themselves
+    if not _is_owner(current):
+        lead["assigned_to"] = current["id"]
     lead.update({
         "id": new_id(),
         "workspace_id": current["workspace_id"],
@@ -275,6 +297,7 @@ async def create_lead(payload: LeadCreate, current=Depends(get_current_user)):
 @api.get("/leads")
 async def list_leads(stage: Optional[str] = None, q: Optional[str] = None, current=Depends(get_current_user)):
     query: Dict[str, Any] = {"workspace_id": current["workspace_id"]}
+    _scope_lead_query(query, current)
     if stage:
         query["stage"] = stage
     if q:
@@ -290,7 +313,8 @@ async def list_leads(stage: Optional[str] = None, q: Optional[str] = None, curre
 
 @api.get("/leads/{lead_id}")
 async def get_lead(lead_id: str, current=Depends(get_current_user)):
-    lead = await db.leads.find_one({"id": lead_id, "workspace_id": current["workspace_id"]}, {"_id": 0})
+    query = _scope_lead_query({"id": lead_id, "workspace_id": current["workspace_id"]}, current)
+    lead = await db.leads.find_one(query, {"_id": 0})
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
     return lead
@@ -301,6 +325,9 @@ async def update_lead(lead_id: str, payload: LeadUpdate, current=Depends(get_cur
     update_data = payload.model_dump(exclude_unset=True)
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
+    # Only owner can reassign leads
+    if "assigned_to" in update_data and not _is_owner(current):
+        raise HTTPException(status_code=403, detail="Only owner can assign leads")
     new_mobile = update_data.get("mobile")
     if new_mobile:
         dup = await db.leads.find_one({
@@ -310,7 +337,8 @@ async def update_lead(lead_id: str, payload: LeadUpdate, current=Depends(get_cur
         })
         if dup:
             raise HTTPException(status_code=400, detail="Another lead with this mobile already exists")
-    existing = await db.leads.find_one({"id": lead_id, "workspace_id": current["workspace_id"]}, {"_id": 0})
+    scoped_q = _scope_lead_query({"id": lead_id, "workspace_id": current["workspace_id"]}, current)
+    existing = await db.leads.find_one(scoped_q, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Lead not found")
     update_data["updated_at"] = now_iso()
@@ -331,6 +359,11 @@ async def update_lead(lead_id: str, payload: LeadUpdate, current=Depends(get_cur
 
 @api.get("/leads/{lead_id}/history")
 async def lead_history(lead_id: str, current=Depends(get_current_user)):
+    # ensure the user has access to this lead first
+    scoped_q = _scope_lead_query({"id": lead_id, "workspace_id": current["workspace_id"]}, current)
+    lead = await db.leads.find_one(scoped_q, {"_id": 0})
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
     items = await db.lead_history.find(
         {"lead_id": lead_id, "workspace_id": current["workspace_id"]}, {"_id": 0}
     ).sort("created_at", -1).to_list(500)
@@ -339,7 +372,10 @@ async def lead_history(lead_id: str, current=Depends(get_current_user)):
 
 @api.delete("/leads/{lead_id}")
 async def delete_lead(lead_id: str, current=Depends(get_current_user)):
-    await db.leads.delete_one({"id": lead_id, "workspace_id": current["workspace_id"]})
+    scoped_q = _scope_lead_query({"id": lead_id, "workspace_id": current["workspace_id"]}, current)
+    res = await db.leads.delete_one(scoped_q)
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Lead not found")
     return {"ok": True}
 
 
@@ -379,13 +415,6 @@ async def list_calls(lead_id: Optional[str] = None, current=Depends(get_current_
 
 
 # ============ FOLLOWUPS ============
-SALES_ROLES = {"executive", "telecaller", "sales_executive"}
-
-
-def _is_sales_user(user: Dict[str, Any]) -> bool:
-    return user.get("role") in SALES_ROLES
-
-
 @api.post("/followups")
 async def create_followup(payload: FollowupCreate, current=Depends(get_current_user)):
     f = payload.model_dump()
@@ -659,27 +688,29 @@ async def add_team_member(body: Dict[str, Any], current=Depends(get_current_user
 @api.get("/dashboard/stats")
 async def dashboard_stats(current=Depends(get_current_user)):
     ws = current["workspace_id"]
-    total_leads = await db.leads.count_documents({"workspace_id": ws})
+    base: Dict[str, Any] = {"workspace_id": ws}
+    _scope_lead_query(base, current)
+    total_leads = await db.leads.count_documents(base)
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    leads_today = await db.leads.count_documents({"workspace_id": ws, "created_at": {"$gte": today}})
-    booked = await db.leads.count_documents({"workspace_id": ws, "stage": "Booked"})
-    won = await db.leads.count_documents({"workspace_id": ws, "stage": "Won"})
-    lost = await db.leads.count_documents({"workspace_id": ws, "stage": "Lost"})
-    hot = await db.leads.count_documents({"workspace_id": ws, "stage": "Hot"})
+    leads_today = await db.leads.count_documents({**base, "created_at": {"$gte": today}})
+    booked = await db.leads.count_documents({**base, "stage": "Booked"})
+    won = await db.leads.count_documents({**base, "stage": "Won"})
+    lost = await db.leads.count_documents({**base, "stage": "Lost"})
+    hot = await db.leads.count_documents({**base, "stage": "Hot"})
     conv = round(((booked + won) / total_leads) * 100, 1) if total_leads else 0
     # source breakdown
     sources_cursor = db.leads.aggregate([
-        {"$match": {"workspace_id": ws}},
+        {"$match": base},
         {"$group": {"_id": "$source", "count": {"$sum": 1}}},
     ])
     sources = [{"source": s["_id"] or "Unknown", "count": s["count"]} async for s in sources_cursor]
     # stage breakdown
     stages_cursor = db.leads.aggregate([
-        {"$match": {"workspace_id": ws}},
+        {"$match": base},
         {"$group": {"_id": "$stage", "count": {"$sum": 1}}},
     ])
     stages = [{"stage": s["_id"] or "New", "count": s["count"]} async for s in stages_cursor]
-    # revenue
+    # revenue (workspace-wide; only owner-relevant metric)
     revenue_cursor = db.payments.aggregate([
         {"$match": {"workspace_id": ws}},
         {"$group": {"_id": None, "total": {"$sum": "$amount"}}},
