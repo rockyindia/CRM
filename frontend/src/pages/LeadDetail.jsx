@@ -37,20 +37,22 @@ export default function LeadDetail() {
   const [aiNext, setAiNext] = useState(null);
   const [aiSummary, setAiSummary] = useState(null);
   const [aiBusy, setAiBusy] = useState(null);
+  const [history, setHistory] = useState([]);
 
   const teamMap = useMemo(() => Object.fromEntries(team.map((m) => [m.id, m.full_name])), [team]);
   const projectMap = useMemo(() => Object.fromEntries(projects.map((p) => [p.id, p.name])), [projects]);
 
   const load = async () => {
-    const [a, b, c, t, p] = await Promise.all([
+    const [a, b, c, t, p, h] = await Promise.all([
       api.get(`/leads/${id}`),
       api.get(`/calls`, { params: { lead_id: id } }),
       api.get(`/followups`, { params: { lead_id: id } }),
       api.get(`/team`),
       api.get(`/projects`),
+      api.get(`/leads/${id}/history`),
     ]);
     setLead(a.data); setCalls(b.data); setFollowups(c.data);
-    setTeam(t.data); setProjects(p.data);
+    setTeam(t.data); setProjects(p.data); setHistory(h.data);
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [id]);
 
@@ -248,6 +250,7 @@ export default function LeadDetail() {
         <TabsList>
           <TabsTrigger value="followups" data-testid="tab-followups">Follow-ups ({followups.length})</TabsTrigger>
           <TabsTrigger value="calls" data-testid="tab-calls">Calls ({calls.length})</TabsTrigger>
+          <TabsTrigger value="history" data-testid="tab-history">History ({history.length})</TabsTrigger>
         </TabsList>
 
         <TabsContent value="followups" className="space-y-4">
@@ -342,11 +345,33 @@ export default function LeadDetail() {
             </ul>
           </Card>
         </TabsContent>
+
+        <TabsContent value="history" className="space-y-4">
+          <Card className="p-5 bg-surface border-border shadow-none">
+            <div className="font-heading font-medium mb-4 flex items-center gap-2"><Clock size={18} /> Activity history</div>
+            {history.length ? (
+              <ol className="relative border-l border-border ml-2 space-y-3 pl-5">
+                {history.map((h) => (
+                  <li key={h.id} className="relative" data-testid={`history-${h.id}`}>
+                    <span className="absolute -left-[26px] top-1 h-3 w-3 rounded-full bg-accent border-2 border-background" />
+                    <div className="text-sm">
+                      Stage changed from <span className="font-semibold">{h.from || "—"}</span> to <span className="font-semibold">{h.to}</span>
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-0.5">
+                      by {h.user_name || "—"} • {new Date(h.created_at).toLocaleString()}
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <div className="text-sm text-muted-foreground text-center py-6">No stage changes yet.</div>
+            )}
+          </Card>
+        </TabsContent>
       </Tabs>
 
       {/* Edit Lead dialog */}
-      <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Edit Lead</DialogTitle></DialogHeader>
           <form onSubmit={onEditSave} className="space-y-3">
             <div className="grid grid-cols-2 gap-3">

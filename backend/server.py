@@ -301,7 +301,6 @@ async def update_lead(lead_id: str, payload: LeadUpdate, current=Depends(get_cur
     update_data = payload.model_dump(exclude_unset=True)
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
-    # Duplicate mobile check on edit
     new_mobile = update_data.get("mobile")
     if new_mobile:
         dup = await db.leads.find_one({
@@ -311,14 +310,31 @@ async def update_lead(lead_id: str, payload: LeadUpdate, current=Depends(get_cur
         })
         if dup:
             raise HTTPException(status_code=400, detail="Another lead with this mobile already exists")
+    existing = await db.leads.find_one({"id": lead_id, "workspace_id": current["workspace_id"]}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Lead not found")
     update_data["updated_at"] = now_iso()
-    result = await db.leads.update_one(
+    await db.leads.update_one(
         {"id": lead_id, "workspace_id": current["workspace_id"]}, {"$set": update_data}
     )
-    if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Lead not found")
+    # Write history entry on stage change
+    if "stage" in update_data and update_data["stage"] != existing.get("stage"):
+        await db.lead_history.insert_one({
+            "id": new_id(), "workspace_id": current["workspace_id"], "lead_id": lead_id,
+            "type": "stage_change", "from": existing.get("stage"), "to": update_data["stage"],
+            "user_id": current["id"], "user_name": current.get("full_name", ""),
+            "created_at": now_iso(),
+        })
     lead = await db.leads.find_one({"id": lead_id}, {"_id": 0})
     return lead
+
+
+@api.get("/leads/{lead_id}/history")
+async def lead_history(lead_id: str, current=Depends(get_current_user)):
+    items = await db.lead_history.find(
+        {"lead_id": lead_id, "workspace_id": current["workspace_id"]}, {"_id": 0}
+    ).sort("created_at", -1).to_list(500)
+    return items
 
 
 @api.delete("/leads/{lead_id}")
