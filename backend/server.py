@@ -1007,7 +1007,15 @@ async def _ensure_workspace_keys(ws: Dict[str, Any]) -> Dict[str, Any]:
     return ws
 
 
-async def _capture_lead(workspace_id: str, payload: Dict[str, Any], default_assignee: str) -> Dict[str, Any]:
+async def _capture_lead(
+    workspace_id: str,
+    payload: Dict[str, Any],
+    default_assignee: str,
+    *,
+    force_assignee_id: Optional[str] = None,
+    force_followup_at: Optional[str] = None,
+    dup_note_tag: Optional[str] = None,
+) -> Dict[str, Any]:
     name = (payload.get("name") or "").strip()
     mobile = (payload.get("mobile") or "").strip()
     if not name or not mobile:
@@ -1016,9 +1024,11 @@ async def _capture_lead(workspace_id: str, payload: Dict[str, Any], default_assi
     if source not in WEBHOOK_SOURCES:
         source = "Other"
     today_due = datetime.now(timezone.utc).replace(hour=18, minute=0, second=0, microsecond=0).isoformat()
-    msg_note = payload.get("message") or payload.get("notes") or ""
+    followup_at = force_followup_at or today_due
+    msg_note = payload.get("message") or payload.get("notes") or payload.get("remarks") or ""
     extra_score = payload.get("lead_score")
     project_interest = payload.get("project_interest") or payload.get("interested_project")
+    assignee = force_assignee_id or default_assignee
     existing = await db.leads.find_one({"workspace_id": workspace_id, "mobile": mobile})
     if existing:
         upd: Dict[str, Any] = {"updated_at": now_iso()}
@@ -1026,9 +1036,13 @@ async def _capture_lead(workspace_id: str, payload: Dict[str, Any], default_assi
                        ("budget", payload.get("budget")), ("interested_project", project_interest)):
             if src and not existing.get(f):
                 upd[f] = float(src) if f == "budget" else src
-        if msg_note:
-            old = existing.get("notes") or ""
-            stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+        old = existing.get("notes") or ""
+        # On import-duplicate we always tag the note with the import label per spec.
+        if dup_note_tag:
+            tagged = f"[{stamp} {dup_note_tag}]" + (f" {msg_note}" if msg_note else "")
+            upd["notes"] = (old + ("\n" if old else "") + tagged).strip()
+        elif msg_note:
             upd["notes"] = (old + ("\n" if old else "") + f"[{stamp} {source}] {msg_note}").strip()
         if extra_score is not None and not existing.get("score"):
             upd["score"] = extra_score
@@ -1037,12 +1051,15 @@ async def _capture_lead(workspace_id: str, payload: Dict[str, Any], default_assi
         if pending == 0:
             await db.followups.insert_one({
                 "id": new_id(), "workspace_id": workspace_id,
-                "user_id": existing.get("assigned_to") or default_assignee,
-                "lead_id": existing["id"], "due_at": today_due,
-                "note": f"Re-captured via {source}: {msg_note[:120]}" if msg_note else f"Re-captured via {source}",
+                "user_id": existing.get("assigned_to") or assignee,
+                "lead_id": existing["id"], "due_at": followup_at,
+                "note": f"Re-captured via {dup_note_tag or source}: {msg_note[:120]}" if msg_note else f"Re-captured via {dup_note_tag or source}",
                 "status": "Pending", "created_at": now_iso(),
             })
-            await db.leads.update_one({"id": existing["id"]}, {"$set": {"followup_date": today_due}})
+            await db.leads.update_one({"id": existing["id"]}, {"$set": {"followup_date": followup_at}})
+        elif force_followup_at:
+            # Caller explicitly requested a follow-up date — refresh the lead's next-FU pointer.
+            await db.leads.update_one({"id": existing["id"]}, {"$set": {"followup_date": force_followup_at}})
         return {"status": "updated", "lead_id": existing["id"], "duplicate": True}
     lead_id = new_id()
     lead = {
@@ -1051,15 +1068,15 @@ async def _capture_lead(workspace_id: str, payload: Dict[str, Any], default_assi
         "budget": float(payload["budget"]) if payload.get("budget") not in (None, "") else None,
         "interested_project": project_interest or None,
         "source": source, "stage": "New", "priority": "Medium",
-        "notes": msg_note or None, "assigned_to": default_assignee,
-        "followup_date": today_due, "score": extra_score,
-        "created_by": default_assignee, "created_at": now_iso(), "updated_at": now_iso(),
+        "notes": msg_note or None, "assigned_to": assignee,
+        "followup_date": followup_at, "score": extra_score,
+        "created_by": assignee, "created_at": now_iso(), "updated_at": now_iso(),
     }
     await db.leads.insert_one(lead)
     await db.followups.insert_one({
-        "id": new_id(), "workspace_id": workspace_id, "user_id": default_assignee,
-        "lead_id": lead_id, "due_at": today_due,
-        "note": f"New lead from {source}: {msg_note[:120]}" if msg_note else f"New lead from {source}",
+        "id": new_id(), "workspace_id": workspace_id, "user_id": assignee,
+        "lead_id": lead_id, "due_at": followup_at,
+        "note": f"New lead from {dup_note_tag or source}: {msg_note[:120]}" if msg_note else f"New lead from {dup_note_tag or source}",
         "status": "Pending", "created_at": now_iso(),
     })
     return {"status": "created", "lead_id": lead_id, "duplicate": False}
@@ -1119,23 +1136,105 @@ async def update_workspace_settings(payload: WorkspaceSettingsUpdate, current=De
 
 
 @api.post("/leads/import")
-async def csv_import_leads(body: Dict[str, Any], current=Depends(get_current_user)):
-    import csv, io
-    csv_text = body.get("csv_text") or ""
-    if not csv_text.strip():
-        raise HTTPException(status_code=400, detail="csv_text is empty")
+async def import_leads(body: Dict[str, Any], current=Depends(get_current_user)):
+    """Excel/CSV import. Accepts:
+       - body.csv_text (string)  OR
+       - body.xlsx_base64 (base64-encoded .xlsx)
+       Auto-detects column names case-insensitively. Skips unknown columns.
+       Required: name, mobile. Optional: email, city, budget, project_interest,
+       source, message, assigned_user, next_followup_date, remarks.
+    """
+    import csv, io, base64
+    csv_text = (body.get("csv_text") or "").strip()
+    xlsx_b64 = (body.get("xlsx_base64") or "").strip()
+
+    rows: List[Dict[str, Any]] = []
+    headers: List[str] = []
+
+    if xlsx_b64:
+        try:
+            from openpyxl import load_workbook
+            raw = base64.b64decode(xlsx_b64)
+            wb = load_workbook(io.BytesIO(raw), data_only=True, read_only=True)
+            ws_xl = wb.active
+            it = ws_xl.iter_rows(values_only=True)
+            try:
+                first = next(it)
+            except StopIteration:
+                raise HTTPException(status_code=400, detail="Excel file is empty")
+            headers = [str(h).strip().lower() if h is not None else "" for h in first]
+            for r in it:
+                row: Dict[str, Any] = {}
+                for i, val in enumerate(r):
+                    if i >= len(headers) or not headers[i]:
+                        continue
+                    if val is None:
+                        row[headers[i]] = ""
+                    elif isinstance(val, datetime):
+                        row[headers[i]] = val.strftime("%Y-%m-%d")
+                    else:
+                        row[headers[i]] = str(val).strip()
+                if any(v for v in row.values()):
+                    rows.append(row)
+        except HTTPException:
+            raise
+        except Exception as e:  # noqa
+            raise HTTPException(status_code=400, detail=f"Could not read Excel file: {str(e)[:140]}")
+    elif csv_text:
+        reader = csv.DictReader(io.StringIO(csv_text))
+        headers = [(h or "").strip().lower() for h in (reader.fieldnames or [])]
+        for r in reader:
+            rows.append({(k or "").strip().lower(): (v or "").strip() for k, v in r.items()})
+    else:
+        raise HTTPException(status_code=400, detail="Provide csv_text or xlsx_base64")
+
+    if "name" not in headers or "mobile" not in headers:
+        raise HTTPException(status_code=400, detail="File must include 'name' and 'mobile' columns")
+
     ws = await db.workspaces.find_one({"id": current["workspace_id"]}, {"_id": 0})
     default_assignee = (ws or {}).get("default_assignee_id") or current["id"]
-    reader = csv.DictReader(io.StringIO(csv_text))
-    headers = [h.strip().lower() for h in (reader.fieldnames or [])]
-    if "name" not in headers or "mobile" not in headers:
-        raise HTTPException(status_code=400, detail="CSV must include 'name' and 'mobile' columns")
+    # Build a lookup table for assigned_user resolution (email, full_name — case-insensitive).
+    team_members = await db.users.find(
+        {"workspace_id": current["workspace_id"]}, {"_id": 0, "password": 0}
+    ).to_list(500)
+    user_lookup: Dict[str, str] = {}
+    for m in team_members:
+        if m.get("email"):
+            user_lookup[m["email"].lower()] = m["id"]
+        if m.get("full_name"):
+            user_lookup[m["full_name"].lower()] = m["id"]
+
+    def _parse_followup_date(raw: str) -> Optional[str]:
+        if not raw:
+            return None
+        s = raw.strip()
+        # Try common formats; spec says YYYY-MM-DD but be tolerant.
+        for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%d-%m-%Y", "%d/%m/%Y", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M"):
+            try:
+                d = datetime.strptime(s, fmt)
+                # If only a date was provided, anchor it to 18:00 UTC for follow-up
+                if fmt in ("%Y-%m-%d", "%Y/%m/%d", "%d-%m-%Y", "%d/%m/%Y"):
+                    d = d.replace(hour=18, minute=0, second=0)
+                return d.replace(tzinfo=timezone.utc).isoformat()
+            except ValueError:
+                continue
+        return None
+
     created = updated = errors = 0
     error_rows: List[str] = []
-    for i, row in enumerate(reader, start=2):
-        normalized = {(k or "").strip().lower(): (v or "").strip() for k, v in row.items()}
+    for i, row in enumerate(rows, start=2):  # row 1 is header
         try:
-            res = await _capture_lead(current["workspace_id"], normalized, default_assignee)
+            assigned_raw = (row.get("assigned_user") or "").strip().lower()
+            force_assignee = user_lookup.get(assigned_raw) if assigned_raw else None
+            force_followup = _parse_followup_date(row.get("next_followup_date") or "")
+            if (row.get("next_followup_date") or "").strip() and not force_followup:
+                raise HTTPException(status_code=400, detail=f"Invalid next_followup_date '{row['next_followup_date']}' (use YYYY-MM-DD)")
+            res = await _capture_lead(
+                current["workspace_id"], row, default_assignee,
+                force_assignee_id=force_assignee,
+                force_followup_at=force_followup,
+                dup_note_tag="Imported via Excel",
+            )
             if res["status"] == "created":
                 created += 1
             else:
@@ -1145,8 +1244,67 @@ async def csv_import_leads(body: Dict[str, Any], current=Depends(get_current_use
             error_rows.append(f"Row {i}: {e.detail}")
         except Exception as e:  # noqa
             errors += 1
-            error_rows.append(f"Row {i}: {str(e)[:120]}")
-    return {"created": created, "updated": updated, "errors": errors, "error_rows": error_rows[:20]}
+            error_rows.append(f"Row {i}: {str(e)[:140]}")
+    return {
+        "total_rows": len(rows),
+        "created": created,
+        "updated": updated,
+        "errors": errors,
+        "error_rows": error_rows[:50],
+    }
+
+
+# Sample import template — used by the "Download Sample" buttons in Settings.
+_TEMPLATE_HEADERS = [
+    "name", "mobile", "email", "city", "budget", "project_interest",
+    "source", "message", "assigned_user", "next_followup_date", "remarks",
+]
+_TEMPLATE_ROWS = [
+    ["Rohit Sharma", "9876543210", "rohit@example.com", "Bangalore", "8500000",
+     "Skyline Residences", "Facebook", "Wants 3BHK near tech park",
+     "demo@example.com", "2026-05-10", "Hot lead from FB ad"],
+    ["Priya Mehta", "9123456780", "priya@example.com", "Chennai", "6200000",
+     "Marina Heights", "Website", "Asked for 2BHK brochure",
+     "", "2026-05-12", "Prefers afternoon calls"],
+    ["Amit Verma", "9988776655", "", "Hyderabad", "12000000",
+     "", "Reference", "Referred by Mr. Khan",
+     "", "", ""],
+]
+
+
+@api.get("/leads/import/template")
+async def import_template(format: str = "csv", current=Depends(get_current_user)):
+    """Return a sample import file. format=csv|xlsx."""
+    from fastapi.responses import Response
+    import csv, io
+    fmt = (format or "csv").lower()
+    if fmt == "csv":
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(_TEMPLATE_HEADERS)
+        for r in _TEMPLATE_ROWS:
+            writer.writerow(r)
+        return Response(
+            content=buf.getvalue(),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=leadempire-import-template.csv"},
+        )
+    if fmt == "xlsx":
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Leads"
+        ws.append(_TEMPLATE_HEADERS)
+        for r in _TEMPLATE_ROWS:
+            ws.append(r)
+        bio = io.BytesIO()
+        wb.save(bio)
+        return Response(
+            content=bio.getvalue(),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": "attachment; filename=leadempire-import-template.xlsx"},
+        )
+    raise HTTPException(status_code=400, detail="format must be csv or xlsx")
 
 
 app.include_router(api)

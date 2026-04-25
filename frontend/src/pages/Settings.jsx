@@ -39,6 +39,8 @@ export default function Settings() {
   const [team, setTeam] = useState([]);
   const [importOpen, setImportOpen] = useState(false);
   const [csvText, setCsvText] = useState("");
+  const [xlsxBase64, setXlsxBase64] = useState("");
+  const [xlsxFileName, setXlsxFileName] = useState("");
   const [importBusy, setImportBusy] = useState(false);
   const [importResult, setImportResult] = useState(null);
   // Call status labels
@@ -110,21 +112,56 @@ export default function Settings() {
   const onFile = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    const isXlsx = /\.xlsx$/i.test(file.name);
     const reader = new FileReader();
-    reader.onload = () => setCsvText(String(reader.result || ""));
-    reader.readAsText(file);
+    if (isXlsx) {
+      reader.onload = () => {
+        // ArrayBuffer -> base64 (chunked to avoid stack overflow on large files)
+        const bytes = new Uint8Array(reader.result);
+        let binary = "";
+        const chunk = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunk) {
+          binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+        }
+        setXlsxBase64(btoa(binary));
+        setXlsxFileName(file.name);
+        setCsvText("");
+      };
+      reader.readAsArrayBuffer(file);
+    } else {
+      reader.onload = () => {
+        setCsvText(String(reader.result || ""));
+        setXlsxBase64(""); setXlsxFileName("");
+      };
+      reader.readAsText(file);
+    }
   };
 
   const onImport = async () => {
     setImportBusy(true); setImportResult(null);
     try {
-      const { data } = await api.post("/leads/import", { csv_text: csvText });
+      const body = xlsxBase64 ? { xlsx_base64: xlsxBase64 } : { csv_text: csvText };
+      const { data } = await api.post("/leads/import", body);
       setImportResult(data);
       toast.success(`Imported: ${data.created} new, ${data.updated} updated`);
     } catch (err) {
       toast.error(err?.response?.data?.detail || "Import failed");
     }
     setImportBusy(false);
+  };
+
+  const downloadTemplate = async (fmt) => {
+    try {
+      const { data } = await api.get(`/leads/import/template?format=${fmt}`, { responseType: "blob" });
+      const url = window.URL.createObjectURL(new Blob([data]));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `leadempire-import-template.${fmt}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch { toast.error("Could not download template"); }
   };
 
   if (!ws) return <div className="text-muted-foreground">Loading…</div>;
@@ -187,7 +224,7 @@ export default function Settings() {
             <div className="text-xs uppercase tracking-[0.2em] font-bold text-muted-foreground">Lead Capture</div>
             <div className="font-heading font-medium text-lg">Webhook, public form & CSV</div>
           </div>
-          <Button variant="outline" onClick={() => { setImportOpen(true); setImportResult(null); setCsvText(""); }} data-testid="import-csv-btn"><Upload size={14} className="mr-2" />Import CSV</Button>
+          <Button variant="outline" onClick={() => { setImportOpen(true); setImportResult(null); setCsvText(""); setXlsxBase64(""); setXlsxFileName(""); }} data-testid="import-csv-btn"><Upload size={14} className="mr-2" />Import CSV / Excel</Button>
         </div>
 
         <div className="grid lg:grid-cols-2 gap-5">
@@ -322,28 +359,44 @@ Headers: x-api-key: <your key>
         <p className="text-xs text-muted-foreground mt-4">Live Stripe checkout will be enabled in Phase 2 with switchable Razorpay support for India.</p>
       </Card>
 
-      {/* CSV Import dialog */}
+      {/* CSV/Excel Import dialog */}
       <Dialog open={importOpen} onOpenChange={setImportOpen}>
         <DialogContent className="max-w-2xl">
-          <DialogHeader><DialogTitle>Import leads from CSV</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Import leads from CSV or Excel</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <div className="text-xs text-muted-foreground">
-              CSV must contain columns: <code>name</code>, <code>mobile</code> (required), and any of:
-              <code> email, city, budget, project_interest, source, message</code>. Duplicates by mobile will be merged.
+              Required columns: <code>name</code>, <code>mobile</code>. Optional:
+              <code> email, city, budget, project_interest, source, message, assigned_user, next_followup_date, remarks</code>.
+              Column names are case-insensitive. Date format: <code>YYYY-MM-DD</code>. Duplicates by mobile will be merged.
             </div>
-            <Input type="file" accept=".csv,text/csv" onChange={onFile} data-testid="csv-file-input" />
-            <textarea
-              value={csvText}
-              onChange={(e) => setCsvText(e.target.value)}
-              rows={10}
-              placeholder="name,mobile,email,city,budget,source,message&#10;Rohit Sharma,9876543210,rohit@example.com,Bangalore,8500000,Facebook,Wants 3BHK"
-              className="w-full text-xs font-mono p-3 rounded-md border border-border bg-background"
-              data-testid="csv-textarea"
-            />
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-muted-foreground">Sample:</span>
+              <Button size="sm" variant="outline" onClick={() => downloadTemplate("csv")} data-testid="download-template-csv-btn">Download CSV</Button>
+              <Button size="sm" variant="outline" onClick={() => downloadTemplate("xlsx")} data-testid="download-template-xlsx-btn">Download Excel</Button>
+            </div>
+            <Input type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={onFile} data-testid="csv-file-input" />
+            {xlsxFileName && (
+              <div className="text-xs text-muted-foreground" data-testid="xlsx-file-name">Selected Excel file: <span className="font-mono">{xlsxFileName}</span></div>
+            )}
+            {!xlsxBase64 && (
+              <textarea
+                value={csvText}
+                onChange={(e) => setCsvText(e.target.value)}
+                rows={10}
+                placeholder="name,mobile,email,city,budget,source,message&#10;Rohit Sharma,9876543210,rohit@example.com,Bangalore,8500000,Facebook,Wants 3BHK"
+                className="w-full text-xs font-mono p-3 rounded-md border border-border bg-background"
+                data-testid="csv-textarea"
+              />
+            )}
             {importResult && (
               <div className="text-sm border border-border rounded-md p-3" data-testid="import-result">
                 <div className="font-semibold mb-1">Import summary</div>
-                <div>Created: <span className="text-success font-semibold">{importResult.created}</span> • Updated: <span className="text-accent font-semibold">{importResult.updated}</span> • Errors: <span className="text-destructive font-semibold">{importResult.errors}</span></div>
+                <div>
+                  Total rows: <span className="font-semibold">{importResult.total_rows ?? (importResult.created + importResult.updated + importResult.errors)}</span>
+                  {" "}• Created: <span className="text-success font-semibold">{importResult.created}</span>
+                  {" "}• Updated: <span className="text-accent font-semibold">{importResult.updated}</span>
+                  {" "}• Errors: <span className="text-destructive font-semibold">{importResult.errors}</span>
+                </div>
                 {importResult.error_rows?.length > 0 && (
                   <ul className="text-xs text-muted-foreground mt-2 list-disc pl-5">
                     {importResult.error_rows.map((r, i) => <li key={i}>{r}</li>)}
@@ -353,7 +406,7 @@ Headers: x-api-key: <your key>
             )}
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setImportOpen(false)}>Close</Button>
-              <Button onClick={onImport} disabled={!csvText.trim() || importBusy} data-testid="run-import-btn">{importBusy ? "Importing…" : "Import"}</Button>
+              <Button onClick={onImport} disabled={(!csvText.trim() && !xlsxBase64) || importBusy} data-testid="run-import-btn">{importBusy ? "Importing…" : "Import"}</Button>
             </div>
           </div>
         </DialogContent>
