@@ -16,8 +16,8 @@ import {
 import { Phone, Sparkle, ArrowLeft, ChatCircleText, PencilSimple, Trash, Clock } from "@phosphor-icons/react";
 import { toast } from "sonner";
 
-const DISPOSITIONS = ["Connected", "Busy", "Not Reachable", "Wrong Number", "Interested", "Not Interested"];
-// Telecalling — quick call statuses captured from the Call Status popup near mobile
+// Telecalling — quick call statuses captured from the Call Status popup near mobile.
+// Workspace-managed labels override these defaults via /api/call-statuses.
 const CALL_STATUSES = ["Not Picked", "Interested", "Busy", "Call Later", "Site Visit", "Wrong Number"];
 
 export default function LeadDetail() {
@@ -63,7 +63,11 @@ export default function LeadDetail() {
     setLead(a.data); setCalls(b.data); setFollowups(c.data);
     setTeam(t.data); setProjects(p.data); setHistory(h.data);
     const labels = (cs.data || []).map((x) => x.label).filter(Boolean);
-    setCallStatusOptions(labels.length ? labels : CALL_STATUSES);
+    const finalLabels = labels.length ? labels : CALL_STATUSES;
+    setCallStatusOptions(finalLabels);
+    // Keep the Log-call form's disposition in-sync if its current value is not in the
+    // workspace's dynamic list (e.g. defaults differ from custom labels).
+    setCallForm((cf) => (finalLabels.includes(cf.disposition) ? cf : { ...cf, disposition: finalLabels[0] }));
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [id]);
 
@@ -364,7 +368,7 @@ export default function LeadDetail() {
                 <Label>Disposition</Label>
                 <Select value={callForm.disposition} onValueChange={(v) => setCallForm({ ...callForm, disposition: v })}>
                   <SelectTrigger data-testid="call-disposition-select"><SelectValue /></SelectTrigger>
-                  <SelectContent>{DISPOSITIONS.map((d) => <SelectItem key={d} value={d}>{d}</SelectItem>)}</SelectContent>
+                  <SelectContent>{callStatusOptions.map((d) => <SelectItem key={d} value={d}>{d}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
               <div><Label>Duration (sec)</Label><Input type="number" value={callForm.duration_seconds} onChange={(e) => setCallForm({ ...callForm, duration_seconds: e.target.value })} data-testid="call-duration-input" /></div>
