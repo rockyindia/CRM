@@ -22,17 +22,13 @@ export default function Admin() {
   const [users, setUsers] = useState([]);
   const [addOpen, setAddOpen] = useState(false);
   const [form, setForm] = useState({ full_name: "", email: "", password: "Welcome@123", role: "sales_user" });
-  const [limits, setLimits] = useState({ user_limit: 5, lead_limit: 1000, plan: "trial" });
+  const [plan, setPlan] = useState("trial");
   const [busy, setBusy] = useState(false);
 
   const load = async () => {
     const [a, b] = await Promise.all([api.get("/admin/overview"), api.get("/team")]);
     setOverview(a.data); setUsers(b.data);
-    setLimits({
-      user_limit: a.data.user_limit ?? 5,
-      lead_limit: a.data.lead_limit ?? 1000,
-      plan: a.data.plan ?? "trial",
-    });
+    setPlan(a.data.plan ?? "trial");
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
 
@@ -66,14 +62,10 @@ export default function Admin() {
     }
   };
 
-  const saveLimits = async () => {
+  const savePlan = async () => {
     try {
-      await api.patch("/admin/limits", {
-        user_limit: Number(limits.user_limit),
-        lead_limit: Number(limits.lead_limit),
-        plan: limits.plan,
-      });
-      toast.success("Limits updated");
+      await api.patch("/admin/limits", { plan });
+      toast.success(`Plan changed to ${plan.charAt(0).toUpperCase() + plan.slice(1)}`);
       await load();
     } catch (err) {
       toast.error(err?.response?.data?.detail || "Failed");
