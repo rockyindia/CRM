@@ -23,7 +23,7 @@ function StatCard({ icon: Icon, label, value, accent, testid }) {
 }
 
 export default function Dashboard() {
-  const { t } = useApp();
+  const { t, refreshFollowupCounts } = useApp();
   const [stats, setStats] = useState(null);
   const [recent, setRecent] = useState([]);
   const [seeding, setSeeding] = useState(false);
@@ -35,9 +35,24 @@ export default function Dashboard() {
     ]);
     setStats(s.data);
     setRecent(l.data.slice(0, 8));
+    // Keep the sidebar follow-up badge in sync with the dashboard counts.
+    refreshFollowupCounts();
+
+    // Fire an in-app reminder once per browser session when there's pending activity.
+    const today = s.data.followups_today ?? 0;
+    const overdue = s.data.followups_overdue ?? 0;
+    if ((today + overdue) > 0 && !sessionStorage.getItem("le_fu_reminder_shown")) {
+      sessionStorage.setItem("le_fu_reminder_shown", "1");
+      const parts = [];
+      if (today) parts.push(`${today} follow-up${today > 1 ? "s" : ""} today`);
+      if (overdue) parts.push(`${overdue} overdue`);
+      const message = `You have ${parts.join(" and ")}.`;
+      if (overdue > 0) toast.error(message, { duration: 6000 });
+      else toast.message(message, { duration: 5000 });
+    }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
 
   const seed = async () => {
     setSeeding(true);

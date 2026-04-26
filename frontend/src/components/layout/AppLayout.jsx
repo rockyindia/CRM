@@ -22,9 +22,11 @@ const NAV = [
 ];
 
 export default function AppLayout() {
-  const { user, workspace, theme, setTheme, lang, setLang, logout, t } = useApp();
+  const { user, workspace, theme, setTheme, lang, setLang, logout, t, followupCounts } = useApp();
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
+
+  const fuBadge = (followupCounts?.today || 0) + (followupCounts?.overdue || 0);
 
   const linkClass = ({ isActive }) =>
     `flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
@@ -62,7 +64,19 @@ export default function AppLayout() {
               onClick={() => setOpen(false)}
             >
               <n.icon size={18} weight="regular" />
-              <span>{t(n.key)}</span>
+              <span className="flex-1">{t(n.key)}</span>
+              {n.key === "followups" && fuBadge > 0 && (
+                <span
+                  className={`min-w-[20px] h-5 px-1.5 rounded-full text-[10px] font-bold grid place-items-center ${
+                    (followupCounts?.overdue || 0) > 0
+                      ? "bg-destructive text-destructive-foreground"
+                      : "bg-accent text-accent-foreground"
+                  }`}
+                  data-testid="nav-followups-badge"
+                >
+                  {fuBadge}
+                </span>
+              )}
             </NavLink>
           ))}
         </nav>

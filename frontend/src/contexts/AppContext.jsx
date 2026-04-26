@@ -48,6 +48,9 @@ export function AppProvider({ children }) {
   const [loading, setLoading] = useState(true);
   const [theme, setTheme] = useState(() => localStorage.getItem("le_theme") || "light");
   const [lang, setLang] = useState(() => localStorage.getItem("le_lang") || "en");
+  // In-app reminder counts (today + overdue) used by the Follow-ups sidebar badge.
+  // Backend already scopes counts by role: owner sees workspace-wide, others see only their own.
+  const [followupCounts, setFollowupCounts] = useState({ today: 0, overdue: 0, upcoming: 0 });
 
   const t = useCallback((k) => TRANSLATIONS[lang]?.[k] || TRANSLATIONS.en[k] || k, [lang]);
 
@@ -68,7 +71,25 @@ export function AppProvider({ children }) {
     setLoading(false);
   }, []);
 
+  // Pull pending-followup counts from the existing dashboard stats (role-scoped on the server).
+  const refreshFollowupCounts = useCallback(async () => {
+    const token = localStorage.getItem("le_token");
+    if (!token) return;
+    try {
+      const { data } = await api.get("/dashboard/stats");
+      setFollowupCounts({
+        today: data.followups_today ?? 0,
+        overdue: data.followups_overdue ?? 0,
+        upcoming: data.followups_upcoming ?? 0,
+      });
+    } catch { /* silent — non-critical */ }
+  }, []);
+
   useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => {
+    if (user) refreshFollowupCounts();
+    else setFollowupCounts({ today: 0, overdue: 0, upcoming: 0 });
+  }, [user, refreshFollowupCounts]);
 
   const login = async (email, password) => {
     const { data } = await api.post("/auth/login", { email, password });
@@ -87,10 +108,12 @@ export function AppProvider({ children }) {
   const logout = () => {
     localStorage.removeItem("le_token");
     setUser(null); setWorkspace(null);
+    setFollowupCounts({ today: 0, overdue: 0, upcoming: 0 });
+    try { sessionStorage.removeItem("le_fu_reminder_shown"); } catch { /* ignore */ }
   };
 
   return (
-    <AppContext.Provider value={{ user, workspace, loading, login, signup, logout, theme, setTheme, lang, setLang, t, refresh }}>
+    <AppContext.Provider value={{ user, workspace, loading, login, signup, logout, theme, setTheme, lang, setLang, t, refresh, followupCounts, refreshFollowupCounts }}>
       {children}
     </AppContext.Provider>
   );
