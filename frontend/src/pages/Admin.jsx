@@ -25,9 +25,6 @@ export default function Admin() {
   const [limits, setLimits] = useState({ user_limit: 5, lead_limit: 1000, plan: "trial" });
   const [busy, setBusy] = useState(false);
 
-  // Owner-only gate (defence in depth — backend also enforces 403)
-  if (user && user.role !== "owner") return <Navigate to="/app" replace />;
-
   const load = async () => {
     const [a, b] = await Promise.all([api.get("/admin/overview"), api.get("/team")]);
     setOverview(a.data); setUsers(b.data);
@@ -38,6 +35,10 @@ export default function Admin() {
     });
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+
+  // Owner-only gate (defence in depth — backend also enforces 403).
+  // Declared AFTER all hooks to avoid the conditional-hook React error.
+  if (user && user.role !== "owner") return <Navigate to="/app" replace />;
 
   const onAddUser = async (e) => {
     e.preventDefault();
